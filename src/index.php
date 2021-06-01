@@ -183,7 +183,7 @@ include_once(ZPUSH_CONFIG);
                 header('HTTP/1.1 500 Internal Server Error');
         }
 
-        if ($ex instanceof AuthenticationRequiredException) {
+        if (($ex instanceof AuthenticationRequiredException) || ($ex instanceof OnlineakteException)) {
             // Only print ZPush legal message for GET requests because
             // some devices send unauthorized OPTIONS requests
             // and don't expect anything in the response body

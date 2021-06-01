@@ -23,6 +23,8 @@
 * Consult LICENSE file for details
 ************************************************/
 
+define("ZPUSH_VERSION", "2.6.2");
+
 if (!defined("ZPUSH_VERSION")) {
     $path = escapeshellarg(dirname(realpath($_SERVER['SCRIPT_FILENAME'])));
     $branch = trim(exec("hash git 2>/dev/null && cd $path >/dev/null 2>&1 && git branch --no-color 2>/dev/null | sed -e '/^[^*]/d' -e \"s/* \(.*\)/\\1/\""));

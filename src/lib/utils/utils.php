@@ -935,11 +935,17 @@ class Utils {
      * @return string
      */
     public static function GetLocalPartFromEmail($email) {
-        $pos = strpos($email, '@');
-        if ($pos === false) {
+        $posdot = strpos($email, '.');
+        if ($posdot === false) {
             return $email;
         }
-        return substr($email, 0, $pos);
+        else {
+            $pos = strrpos($email, '@');
+            if ($pos === false) {
+                return $email;
+            }
+            return substr($email, 0, $pos);
+        }
     }
 
     /**

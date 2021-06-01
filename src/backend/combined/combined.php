@@ -396,7 +396,10 @@ class BackendCombined extends Backend implements ISearchProvider {
 
         ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendCombined->HasChangesSink - Number ChangesSink found: %d", $this->numberChangesSink));
 
-        return true;
+        if ($this->numberChangesSink === 0)
+            return false;
+        else
+            return true;
     }
 
     /**

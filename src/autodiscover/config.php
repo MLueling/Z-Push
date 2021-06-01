@@ -31,10 +31,13 @@
     // define('ZPUSH_HOST', 'zpush.example.com');
 
     // Defines the default time zone, change e.g. to "Europe/London" if necessary
-    define('TIMEZONE', '');
+    define('TIMEZONE', 'Europe/Berlin');
 
     // Defines the base path on the server
     define('BASE_PATH', dirname($_SERVER['SCRIPT_FILENAME']). '/');
+
+    // The Z-Push server location for the autodiscover response
+    define('SERVERURL', 'https://advo-net.org/Microsoft-Server-ActiveSync');
 
     /*
      * Whether to use the complete email address as a login name
@@ -87,7 +90,7 @@
 
     define('LOGBACKEND', 'filelog');
 
-    define('LOGFILEDIR', '/var/log/z-push/');
+    define('LOGFILEDIR', '/var/www/vhosts/advo-net.org/logs/');
     define('LOGFILE', LOGFILEDIR . 'autodiscover.log');
     define('LOGERRORFILE', LOGFILEDIR . 'autodiscover-error.log');
     define('LOGLEVEL', LOGLEVEL_INFO);
@@ -107,4 +110,4 @@
  *  Backend settings
  */
     // the backend data provider
-    define('BACKEND_PROVIDER', '');
+    define('BACKEND_PROVIDER', 'BackendOnlineAkte');

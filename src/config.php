@@ -27,7 +27,7 @@
  *  Default settings
  */
     // Defines the default time zone, change e.g. to "Europe/London" if necessary
-    define('TIMEZONE', '');
+    define('TIMEZONE', 'Europe/Berlin');
 
     // Defines the base path on the server
     define('BASE_PATH', dirname($_SERVER['SCRIPT_FILENAME']). '/');
@@ -57,7 +57,7 @@
      *   false - use the username only.
      *   true  - string the mobile sends as username, e.g. full email address (default).
      */
-    define('USE_FULLEMAIL_FOR_LOGIN', true);
+    define('USE_FULLEMAIL_FOR_LOGIN', false);
 
 /**********************************************************************************
  * StateMachine setting
@@ -68,7 +68,15 @@
  *           State migration script is available, more informations: https://wiki.z-hub.io/x/xIAa
  */
     define('STATE_MACHINE', 'FILE');
-    define('STATE_DIR', '/var/lib/z-push/');
+    if (getenv('TEST_LOCAL') == true) {
+        define('STATE_DIR', '/var/lib/z-push/');
+    } elseif (getenv('TEST_PROD') == true) {
+        //define('STATE_DIR', '/var/www/vhosts/advo-net.org/spktest.advo-net.org/state/');
+        define('STATE_DIR', '/var/lib/z-push/');
+    } else {
+        define('STATE_DIR', '/var/www/vhosts/advo-net.org/state/');
+    }
+    
 
 /**********************************************************************************
  *  IPC - InterProcessCommunication
@@ -84,7 +92,10 @@
  *                            memcached server before (it won't be installed by z-push-ipc-memcached).
  *  IpcWincacheProvider     - for windows systems.
  */
-    define('IPC_PROVIDER', '');
+    define('IPC_PROVIDER', 'IpcMemcachedProvider');
+
+    // Don't collection any data for z-push-top
+    define('TOPCOLLECTOR_DISABLED', true);
 
 /**********************************************************************************
  *  Logging settings
@@ -112,18 +123,37 @@
  *  LOGAUTHFAIL is logged to the LOGBACKEND.
  */
     define('LOGBACKEND', 'filelog');
-    define('LOGLEVEL', LOGLEVEL_INFO);
-    define('LOGAUTHFAIL', false);
+    if ((getenv('TEST_LOCAL') == true) or (getenv('TEST_PROD') == true)) {
+        define('LOGLEVEL', LOGLEVEL_DEBUG);
+    }
+    else {
+        define('LOGLEVEL', LOGLEVEL_INFO);
+    }
+        
+    define('LOGAUTHFAIL', true);
 
     // To save e.g. WBXML data only for selected users, add the usernames to the array
     // The data will be saved into a dedicated file per user in the LOGFILEDIR
     // Users have to be encapusulated in quotes, several users are comma separated, like:
     //   $specialLogUsers = array('info@domain.com', 'myusername');
     define('LOGUSERLEVEL', LOGLEVEL_DEVICEID);
-    $specialLogUsers = array();
+    //$specialLogUsers = array('ml##meissner##advoware', 'ML##Meissner##ADVOWARE');
+    if ((getenv('TEST_LOCAL') == true) or (getenv('TEST_PROD') == true)) {
+        $specialLogUsers = array('ML##ubtest##TESTUWE', 'ml##ubtest##testuwe', 'UB##ubtest##TESTUWE', 'ub##ubtest##testuwe');
+    }
+    else {
+        $specialLogUsers = array();
+    }
 
     // Filelog settings
-    define('LOGFILEDIR', '/var/log/z-push/');
+    if (getenv('TEST_LOCAL') == true) {
+        define('LOGFILEDIR', '/var/log/z-push/');    
+    } elseif (getenv('TEST_PROD') == true){
+        //define('LOGFILEDIR', '/var/www/vhosts/advo-net.org/spktest.advo-net.org/log/');
+        define('LOGFILEDIR', '/var/log/z-push/');    
+    } else {
+        define('LOGFILEDIR', '/var/www/vhosts/advo-net.org/logs/');
+    }
     define('LOGFILE', LOGFILEDIR . 'z-push.log');
     define('LOGERRORFILE', LOGFILEDIR . 'z-push-error.log');
 
@@ -145,7 +175,7 @@
  *  Mobile settings
  */
     // Device Provisioning
-    define('PROVISIONING', true);
+    define('PROVISIONING', false);
 
     // This option allows the 'loose enforcement' of the provisioning policies for older
     // devices which don't support provisioning (like WM 5 and HTC Android Mail) - dw2412 contribution
@@ -172,12 +202,16 @@
     //   SYNC_FILTERTYPE_ALL (default, no limitation)
     //   SYNC_FILTERTYPE_1DAY, SYNC_FILTERTYPE_3DAYS, SYNC_FILTERTYPE_1WEEK, SYNC_FILTERTYPE_2WEEKS,
     //   SYNC_FILTERTYPE_1MONTH, SYNC_FILTERTYPE_3MONTHS, SYNC_FILTERTYPE_6MONTHS
-    define('SYNC_FILTERTIME_MAX', SYNC_FILTERTYPE_ALL);
+    define('SYNC_FILTERTIME_MAX', SYNC_FILTERTYPE_6MONTHS);
 
     // Interval in seconds before checking if there are changes on the server when in Ping.
     // It means the highest time span before a change is pushed to a mobile. Set it to
     // a higher value if you have a high load on the server.
-    define('PING_INTERVAL', 30);
+    if ((getenv('TEST_LOCAL') == true) or (getenv('TEST_PROD') == true)) {
+        define('PING_INTERVAL', 10);
+    } else {
+        define('PING_INTERVAL', 45);
+    }    
 
     // Set the fileas (save as) order for contacts in the webaccess/webapp/outlook.
     // It will only affect new/modified contacts on the mobile which then are synced to the server.
@@ -296,7 +330,7 @@
     // BackendMaildir    -  to sync emails from a Maildir.
     // BackendStickyNote -  to sync notes with a Postgres server.
     // BackendVCardDir   -  to sync contacts with vcard folder.
-    define('BACKEND_PROVIDER', '');
+    define('BACKEND_PROVIDER', 'BackendOnlineAkte');
 
 /**********************************************************************************
  *  Search provider settings
