@@ -49,23 +49,17 @@
 //define('ONLINEAKTE_WSDL', 'https://www.advo-net.net/OnlineAkte/KalenderWebSvc/KalenderWebService.asmx?WSDL');
 //define('ONLINEAKTE_WSDL', 'http://localhost:55772/KalenderWebService.asmx?WSDL');
 
-define ('RELAY_REST_URL_TERMINE_SUFFIX', 'api/v1/advonet/TermineActiveSync');
-define ('RELAY_REST_URL_TODOS_SUFFIX', 'api/v1/advonet/TodosActiveSync');
+define('RELAY_REST_URL_TERMINE_SUFFIX', 'api/v1/advonet/TermineActiveSync');
+define('RELAY_REST_URL_TODOS_SUFFIX', 'api/v1/advonet/TodosActiveSync');
 define('ADVONET_CONFIGURATOR_URL', 'https://www2.advo-net.net/AdvonetConfigurator/api');
 
-if (getenv('TEST_LOCAL') == true) {
-  define('ONLINEAKTE_REST_URL_TERMINE', 'http://localhost:64444/OnlineakteWeb/api/Termine');
-  define('ONLINEAKTE_REST_URL_TODO', 'http://localhost:64444/OnlineakteWeb/api/Todo');
-}elseif (getenv('TEST_PROD') == true) {
-  define('ONLINEAKTE_REST_URL_TERMINE', 'https://www.advo-net.net/OnlineAkte/WebSvc/api/Termine');
-  define('ONLINEAKTE_REST_URL_TODO', 'https://www.advo-net.net/OnlineAkte/WebSvc/api/Todo');
-  define('RELAY_REST_URL_LICENSE', 'https://insider.advo-net.org:90/api/v1/license');
-  define('RELAY_BASE_URL', 'https://insider.advo-net.org:90/');
+define('ONLINEAKTE_REST_URL_TERMINE', 'https://www.advo-net.net/OnlineAkte/WebSvc/api/Termine');
+define('ONLINEAKTE_REST_URL_TODO', 'https://www.advo-net.net/OnlineAkte/WebSvc/api/Todo');
+define('RELAY_REST_URL_LICENSE', 'https://insider.advo-net.org:90/api/v1/license');
+define('RELAY_BASE_URL', 'https://insider.advo-net.org:90/');
 
-} else { // PRODUKTIVUMGEBUNG
-  define('ONLINEAKTE_REST_URL_TERMINE', 'https://www.advo-net.net/OnlineAkte/WebSvc/api/Termine');
-  define('ONLINEAKTE_REST_URL_TODO', 'https://www.advo-net.net/OnlineAkte/WebSvc/api/Todo');
-  define('RELAY_REST_URL_LICENSE', 'https://www2.advo-net.net:90/api/v1/license');
-  define('RELAY_BASE_URL', 'https://www2.advo-net.org:90/');
-}
+//  define('ONLINEAKTE_REST_URL_TERMINE', 'http://localhost:64444/OnlineakteWeb/api/Termine');
+//  define('ONLINEAKTE_REST_URL_TODO', 'http://localhost:64444/OnlineakteWeb/api/Todo');
+//  define('RELAY_REST_URL_LICENSE', 'https://www2.advo-net.net:90/api/v1/license');
+//  define('RELAY_BASE_URL', 'https://www2.advo-net.org:90/');
 ?>

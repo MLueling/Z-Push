@@ -26,7 +26,8 @@
 
 // Comma separated list of available memcache servers.
 // Servers can be added as 'hostname:port,otherhost:port'
-define('MEMCACHED_SERVERS','localhost:11211');
+// define('MEMCACHED_SERVERS','localhost:11211');
+define('MEMCACHED_SERVERS', getenv('ZPUSH_ENV_MEMCACHED_SERVERS'));
 
 // Memcached down indicator
 // In case memcached is not available, a lock file will be written to disk
@@ -35,7 +36,8 @@ define('MEMCACHED_DOWN_LOCK_FILE', '/tmp/z-push-memcache-down');
 define('MEMCACHED_DOWN_LOCK_EXPIRATION', 30);
 
 // Prefix to used for keys
-define('MEMCACHED_PREFIX', 'z-push-ipc');
+//define('MEMCACHED_PREFIX', 'z-push-ipc');
+define('MEMCACHED_PREFIX', getenv('ZPUSH_ENV_MEMCACHED_PREFIX'));
 
 // Connection timeout in ms
 define('MEMCACHED_TIMEOUT', 100);

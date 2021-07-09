@@ -36,10 +36,15 @@
  * STATE_SQL_OPTIONS:   array with options needed
  */
 define('STATE_SQL_ENGINE', 'mysql');
-define('STATE_SQL_SERVER', 'localhost');
-define('STATE_SQL_PORT', '3306');
-define('STATE_SQL_DATABASE', 'zpush');
-define('STATE_SQL_USER', 'root');
-define('STATE_SQL_PASSWORD', '');
+//define('STATE_SQL_SERVER', 'docker-mysql-z-push');
+define('STATE_SQL_SERVER', getenv('ZPUSH_ENV_STATE_SQL_SERVER'));
+//define('STATE_SQL_PORT', '3306');
+define('STATE_SQL_PORT', getenv('ZPUSH_ENV_STATE_SQL_PORT'));
+//define('STATE_SQL_DATABASE', 'zpush');
+define('STATE_SQL_DATABASE', getenv('ZPUSH_ENV_STATE_SQL_DATABASE'));
+//define('STATE_SQL_USER', 'root');
+define('STATE_SQL_USER', getenv('ZPUSH_ENV_STATE_SQL_USER'));
+//define('STATE_SQL_PASSWORD', 'zpushroot');
+define('STATE_SQL_PASSWORD', getenv('ZPUSH_ENV_STATE_SQL_PASSWORD'));
 define('STATE_SQL_OPTIONS', serialize(array(PDO::ATTR_PERSISTENT => true)));
 

@@ -57,7 +57,7 @@
      *   false - use the username only.
      *   true  - string the mobile sends as username, e.g. full email address (default).
      */
-    define('USE_FULLEMAIL_FOR_LOGIN', false);
+    define('USE_FULLEMAIL_FOR_LOGIN', true);
 
 /**********************************************************************************
  * StateMachine setting
@@ -67,16 +67,8 @@
  *   SQL   - SqlStateMachine has own configuration file. STATE_DIR is ignored.
  *           State migration script is available, more informations: https://wiki.z-hub.io/x/xIAa
  */
-    define('STATE_MACHINE', 'FILE');
-    if (getenv('TEST_LOCAL') == true) {
-        define('STATE_DIR', '/var/lib/z-push/');
-    } elseif (getenv('TEST_PROD') == true) {
-        //define('STATE_DIR', '/var/www/vhosts/advo-net.org/spktest.advo-net.org/state/');
-        define('STATE_DIR', '/var/lib/z-push/');
-    } else {
-        define('STATE_DIR', '/var/www/vhosts/advo-net.org/state/');
-    }
-    
+    define('STATE_MACHINE', 'SQL');
+    define('STATE_DIR', '/var/lib/z-push/');
 
 /**********************************************************************************
  *  IPC - InterProcessCommunication
@@ -123,14 +115,8 @@
  *  LOGAUTHFAIL is logged to the LOGBACKEND.
  */
     define('LOGBACKEND', 'filelog');
-    if ((getenv('TEST_LOCAL') == true) or (getenv('TEST_PROD') == true)) {
-        define('LOGLEVEL', LOGLEVEL_DEBUG);
-    }
-    else {
-        define('LOGLEVEL', LOGLEVEL_INFO);
-    }
-        
-    define('LOGAUTHFAIL', true);
+    define('LOGLEVEL', constant(getenv('ZPUSH_ENV_LOGLEVEL')));
+    //define('LOGLEVEL', LOGLEVEL_INFO);
 
     // To save e.g. WBXML data only for selected users, add the usernames to the array
     // The data will be saved into a dedicated file per user in the LOGFILEDIR
@@ -146,16 +132,9 @@
     }
 
     // Filelog settings
-    if (getenv('TEST_LOCAL') == true) {
-        define('LOGFILEDIR', '/var/log/z-push/');    
-    } elseif (getenv('TEST_PROD') == true){
-        //define('LOGFILEDIR', '/var/www/vhosts/advo-net.org/spktest.advo-net.org/log/');
-        define('LOGFILEDIR', '/var/log/z-push/');    
-    } else {
-        define('LOGFILEDIR', '/var/www/vhosts/advo-net.org/logs/');
-    }
-    define('LOGFILE', LOGFILEDIR . 'z-push.log');
-    define('LOGERRORFILE', LOGFILEDIR . 'z-push-error.log');
+    define('LOGFILEDIR', getenv('ZPUSH_ENV_LOGFILEDIR'));
+    define('LOGFILE', LOGFILEDIR . getenv('ZPUSH_ENV_LOGFILE'));
+    define('LOGERRORFILE', LOGFILEDIR . getenv('ZPUSH_ENV_LOGERRORFILE'));
 
     // Syslog settings
     // false will log to local syslog, otherwise put the remote syslog IP here
@@ -207,11 +186,7 @@
     // Interval in seconds before checking if there are changes on the server when in Ping.
     // It means the highest time span before a change is pushed to a mobile. Set it to
     // a higher value if you have a high load on the server.
-    if ((getenv('TEST_LOCAL') == true) or (getenv('TEST_PROD') == true)) {
-        define('PING_INTERVAL', 10);
-    } else {
-        define('PING_INTERVAL', 45);
-    }    
+    define('PING_INTERVAL', getenv('ZPUSH_ENV_PING_INTERVAL'));
 
     // Set the fileas (save as) order for contacts in the webaccess/webapp/outlook.
     // It will only affect new/modified contacts on the mobile which then are synced to the server.
