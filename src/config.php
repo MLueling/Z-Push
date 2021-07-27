@@ -57,7 +57,7 @@
      *   false - use the username only.
      *   true  - string the mobile sends as username, e.g. full email address (default).
      */
-    define('USE_FULLEMAIL_FOR_LOGIN', true);
+    define('USE_FULLEMAIL_FOR_LOGIN', false);
 
 /**********************************************************************************
  * StateMachine setting
@@ -353,7 +353,7 @@
     // Delivery receipt requests
     define('KOE_CAPABILITY_RECEIPTS', true);
     // Impersonate other users
-    define('KOE_CAPABILITY_IMPERSONATE', true);
+    define('KOE_CAPABILITY_IMPERSONATE', false);
 
     // To synchronize the GAB KOE, the GAB store and folderid need to be specified.
     // Use the gab-sync script to generate this data. The name needs to

@@ -51,8 +51,8 @@ class BackendOnlineAkte extends BackendDiff {
 	private $_baseUrlTodos;
 	// Die Testkanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
 	//private $_testKanzleien = array('mltest', 'helpdesktermine', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
-	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
-	private $_testKanzleienNurEigene = array('steinbock-partner', 'mltest');
+	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann');
+	private $_testKanzleienAlleOrdner = array('mltest');
 
 	public function GetSupportedASVersion() {
 		return ZPush::ASV_14;
@@ -67,7 +67,7 @@ class BackendOnlineAkte extends BackendDiff {
 			$username_iso = mb_convert_encoding($username, "ISO-8859-1", "UTF-8");
 			$password_iso = mb_convert_encoding($password, "ISO-8859-1", "UTF-8");
 
-			// prüfen ob Kanzlei bereits connector verwendet
+                        // prüfen ob Kanzlei bereits connector verwendet
 			if (in_array(strtolower($this->_kanzlei), $this->_testKanzleien)) {
 				try {
 					// Schritt 1: AdvonetConfigurator nach der Relay Url fragen
@@ -103,7 +103,7 @@ class BackendOnlineAkte extends BackendDiff {
 					if (!$rest->hasErrors()) {
 						ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Response KuerzelForProduct/1: %s", print_r($rest->body, true)));
 						foreach($rest->body as $folder) {
-							if (in_array(strtolower($this->_kanzlei), $this->_testKanzleienNurEigene)) {
+							if (!in_array(strtolower($this->_kanzlei), $this->_testKanzleienAlleOrdner)) {
 								if ($this->_kuerzel == $folder)
 									$this->_mitarbeiter[] = $folder;
 							}
