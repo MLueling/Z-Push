@@ -14,12 +14,10 @@
 ************************************************/
 
 require_once("backend/onlineakte/config.php");
+require_once("backend/onlineakte/IdentityHMAC.php");
+require_once("backend/onlineakte/NewTokenData.php");
 include_once('lib/default/diffbackend/diffbackend.php');
 include('httpful.phar');
-//include_once('include/z_RTF.php');
-//include_once('/usr/share/awl/inc/iCalendar.php');
-//require_once('vendor/autoload.php');
-//require 'vendor/autoload.php';
 define("FEHLER_NICHT_FREIGESCHALTET", "freigeschaltet"); // Produkt oder SB nicht freigeschaltet
 define("FEHLER_NICHT_ANGEMELDET", "ist nicht angemeldet"); // Kanzlei / Datenbank ist nicht angemeldet
 define("FEHLER_FALSCHES_KENNWORT", "Falscher Name oder falsches Kennwort");
@@ -49,10 +47,12 @@ class BackendOnlineAkte extends BackendDiff {
 	private $_mitarbeiter = array(); // Kuerzel
 	private $_baseUrlTermine;
 	private $_baseUrlTodos;
+	private $_urlSecurityGateway;
 	// Die Testkanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
 	//private $_testKanzleien = array('mltest', 'helpdesktermine', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
 	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann');
 	private $_testKanzleienAlleOrdner = array('mltest');
+        private $_access_token;
 
 	public function GetSupportedASVersion() {
 		return ZPush::ASV_14;
@@ -70,8 +70,49 @@ class BackendOnlineAkte extends BackendDiff {
                         // prüfen ob Kanzlei bereits connector verwendet
 			if (in_array(strtolower($this->_kanzlei), $this->_testKanzleien)) {
 				try {
-					// Schritt 1: AdvonetConfigurator nach der Relay Url fragen
+                                        // Schritt 1
+                                        // - Prüfen ob in Redis bereits ein gültiges token gespeichert ist
+                                        $redis = new Redis();
+                                        $redis->connect('redis-advonet-insider'); // ToDo: auslagern in container config
+                                        //$dummy = $redis->ping('helloredis');
+                                        //ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->Logon('%s')", $dummy));
+                                        $redisKeyTokenData = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_tokendata";
+                                        $redisKeyMitarbeiter = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_mitarbeiter";
+                                        // Achtung: Durch das cachen der BaseUrlRelay kann es zu Problemen nach der Änderung kommen. Passiert nur beim Testen, nicht produktiv...
+                                        $redisKeyBaseUrlRelay = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_baseurlrelay";
+                                        $redisKeyUrlSecurityGateway = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_urlSecurityGateway";
+                                        $tokenData = json_decode($redis->get($redisKeyTokenData));
+                                        $mitarbeiter =  json_decode($redis->get($redisKeyMitarbeiter));
+                                        $baseUrlRelay = $redis->get($redisKeyBaseUrlRelay);
+                                        $urlSecurityGateway = $redis->get($redisKeyUrlSecurityGateway);
+                                        if (!empty($tokenData) && !empty($mitarbeiter) && !empty($baseUrlRelay) && !empty($urlSecurityGateway)) {
+                                            if (isset($tokenData->expiration_utc) && (strlen($tokenData->expiration_utc) > 0) && (strlen($tokenData->access_token) > 0)) {
+                                                $tokenExpirationUtc = date_create_from_format('Y-m-d\TH:i:s\Z', substr($tokenData->expiration_utc, 0, strpos($tokenData->expiration_utc, '.')) . 'Z', timezone_open("UTC"));
+                                                //$tokenExpirationUtc = date_create_from_format("", $tokenData->expiration_utc, new DateTimeZone("UTC"));
+                                                $objDateTimeNow = new DateTime('NOW');
+                                                $objDateTimeNow->setTimezone(new DateTimeZone("UTC"));
+                                                $diffInMinutes = intdiv($tokenExpirationUtc->getTimestamp() - $objDateTimeNow->getTimestamp(), 60);
+                                                if ($diffInMinutes >= 2) {
+                                                    ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->Logon(): %s: Found token valid for %d minutes.", $redisKeyTokenData, $diffInMinutes));
+                                                    $this->_mitarbeiter = $mitarbeiter;
+                                                    $this->_baseUrlTermine = $baseUrlRelay . RELAY_REST_URL_TERMINE_SUFFIX;
+                                                    $this->_baseUrlTodos = $baseUrlRelay . RELAY_REST_URL_TODOS_SUFFIX;
+                                                    $this->_urlSecurityGateway = $urlSecurityGateway;
+                                                    $this->_access_token = $tokenData->access_token;
+                                                    // gespeichertes token verwenden
+                                                    return true;
+                                                }                        
+                                            }
+                                        }
+
+                                        ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->Logon(): No valid token found, refreshing..."));
+
+                                        // Schritt 2
+                                        // - Kein gültiges token gefunden
+                                        // - AdvonetConfigurator nach der Relay Url fragen
+                                        
 					$baseUrlRelay = RELAY_BASE_URL;
+                                        $urlSecurityGateway = SECURITY_GATEWAY_TOKEN_BASE_URL . "api/v1/Token";
 					$urlConfigurator = ADVONET_CONFIGURATOR_URL . "/Url?Kanzlei=" . urlencode($this->_kanzlei);
 					$time_start = microtime(true);
 					$rest = \Httpful\Request::get($urlConfigurator)
@@ -83,15 +124,87 @@ class BackendOnlineAkte extends BackendDiff {
 						ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Response from AdvoNetConfigurator: %s", print_r($rest->body, true)));
 						if (isset($rest->body->relayUrl) && !empty($rest->body->relayUrl))
 							$baseUrlRelay = $rest->body->relayUrl;
+						if (isset($rest->body->securityGateway) && !empty($rest->body->securityGateway))
+							$urlSecurityGateway = $rest->body->securityGateway . "api/v1/Token";
 					}
 					else {
 						if ($rest->hasBody())
-							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for Urls from AdvoNetConfigurator error code: %s, text: &s", $rest->code, print_r($rest->body, true)));
+							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for Urls from AdvoNetConfigurator error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
 						else
 							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for Urls from AdvoNetConfigurator code: %s", $rest->code));
 					}
+                                        
+                                        // Schritt 3
+                                        // - token vom Security Gateway anfordern
+                                        
+                                        $identityHMAC = new IdentityHMAC();
+                                        $identityHMAC->AppID = "SPK_2.0";
+                                        $identityHMAC->Kanzlei = $this->_kanzlei;
+                                        $identityHMAC->Database = $this->_datenbank;
+                                        $identityHMAC->User = $this->_kuerzel;
+                                        $identityHMAC->Password = $password_iso;
+                                        $identityHMAC->Role = 2;
+                                        $identityHMAC->Product = 1;
 
-					// Schritt 2 Kuerzel (=folder) auslesen
+                                        $body = $identityHMAC->Sign(getenv('ZPUSH_ENV_SPK2_APIKEY'));
+					ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() SPK2.0 body=%s", $body));
+					ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() SPK2.0 ApiKey=%s", getenv('ZPUSH_ENV_SPK2_APIKEY')));
+
+                                        try {
+                                            $rest = \Httpful\Request::post($urlSecurityGateway)
+                                                    ->body($body)
+                                                    ->expectsJson()
+                                                    ->timeout(15)
+                                                    ->sendsJson()
+                                                    ->send();
+                                            if (!$rest->hasErrors()) {
+                                                ZLog::Write(LOGLEVEL_DEBUG, print_r($rest, true));
+                                            } else {
+                                                if ($rest->hasBody())
+                                                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Get token error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
+                                                else
+                                                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Get token error code: %s", $rest->code));
+                                            }
+                                        } catch (Exception $fault) {
+                                            ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->LogonRest() Acquiring token failed with exception: " . $fault->getMessage());
+                                        }
+
+                                        // Testdaten bis insider SG aktualisiert ist
+                                        $response = '{
+                                            "token_type": "Bearer",
+                                            "expires_in": 36000,
+                                            "expiration_utc": "2022-08-17T21:49:59.5864907Z",
+                                            "access_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjM4ODA5NDk0NzJDRDVBMDlFRDlCMEUyMUFCMTExMTlBQjg3NkIxQTQiLCJ4NXQiOiJPSUNVbEhMTldnbnRtdzRocXhFUm1yaDJzYVEiLCJ0eXAiOiJKV1QifQ.eyJzdWIiOiJNYXR0aGlhcyBMw7xsaW5nIiwianRpIjoiZjAyZjhjMjUtZWU2Yy00MzhmLTk2ODYtOTk0NDBlMjg1MjBjIiwiS2FuemxlaSI6Im1sdGVzdCIsIkRhdGFiYXNlIjoiTUFUVEhJQVMxMiIsIkFwcElEIjoiU1BLXzIuMCIsIlByb2R1Y3QiOiJTbWFydHBob25lS2FsZW5kZXIiLCJSb2xlIjoiTWl0YXJiZWl0ZXIiLCJVc2VySUQiOiIxMyIsIlVzZXJTaG9ydCI6Ik1MIiwibmJmIjoxNjYwNzM2OTk5LCJleHAiOjE2NjA3NzI5OTksImlhdCI6MTY2MDczNjk5OSwiaXNzIjoiYWR2b25ldFNlY3VyaXR5R2F0ZXdheSIsImF1ZCI6ImFkdm9uZXRVc2VyIn0.r4LomIIDDgWLSFw3GndB5MDwjOUIbAkhuG4DJElmoIwH9dKJVAOnIgXasdnJcW9GZbFF52LLNEe_VFSqXccbyAEhykbpBlfryQhwl-UzMuKgEeh5xcbaiV8ve4nYgSQtjnEkkalH56WXVbUSQXJlYpg9wC4gnnmEoIyU-7b9_U37AzqthN74pxtELAYR0naJnrIZmmUueiM0YQz_xm_myJUFi9ha0HwfzjdenURwL46Us4QqvPUKktcyARahxUZy3PhzJNivreTS8noVwx4ASR0cNX8HSj_yxOO9287rpFK9yM6tWDNpwdtMA3Vo4hBI8QepvatuZAmOHM-wP0TLaw",
+                                            "refresh_token": null
+                                        }';
+                                        
+                                        $tokenData = json_decode($response);
+                                        if (isset($tokenData->expiration_utc) && (strlen($tokenData->expiration_utc) > 0) && (strlen($tokenData->access_token) > 0)) {
+                                            $tokenExpirationUtc = date_create_from_format('Y-m-d\TH:i:s\Z', substr($tokenData->expiration_utc, 0, strpos($tokenData->expiration_utc, '.')) . 'Z', timezone_open("UTC"));
+                                            //$tokenExpirationUtc = date_create_from_format("", $tokenData->expiration_utc, new DateTimeZone("UTC"));
+                                            $objDateTimeNow = new DateTime('NOW');
+                                            $objDateTimeNow->setTimezone(new DateTimeZone("UTC"));
+                                            $diffInSeconds = $tokenExpirationUtc->getTimestamp() - $objDateTimeNow->getTimestamp();
+                                            if ($diffInSeconds >= 120) {
+                                                $ttl = $diffInSeconds - 120; // 2 Minuten vor Ablauf des token diesen aus dem Cache löschen
+                                                //ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->Logon(): %s: Found token valid for %d minutes.", $redisKeyTokenData, $diffInMinutes));
+                                                $redis->setex($redisKeyTokenData, $ttl, $response);
+                                                
+                                                $this->_mitarbeiter[] = $this->_kuerzel; // ToDo: Hier geht die Unterstüzung für mehrere Ordner verloren
+                                                $redis->setex($redisKeyMitarbeiter, $ttl, json_encode($this->_mitarbeiter[]));
+                                                $redis->setex($redisKeyBaseUrlRelay, $ttl, $response);
+                                                $redis->setex($redisKeyUrlSecurityGateway, $ttl, $response);
+                                                $this->_mitarbeiter = $mitarbeiter;
+                                                $this->_baseUrlTermine = $baseUrlRelay . RELAY_REST_URL_TERMINE_SUFFIX;
+                                                $this->_baseUrlTodos = $baseUrlRelay . RELAY_REST_URL_TODOS_SUFFIX;
+                                                $this->_urlSecurityGateway = $urlSecurityGateway;
+                                                $this->_access_token = $tokenData->access_token;
+                                                // gespeichertes token verwenden
+                                                return true;
+                                            }                        
+                                        }
+					// Schritt 4
+                                        // - Kuerzel (=folder) auslesen
 					$url = $baseUrlRelay . "api/v1/license/KuerzelForProduct/1"; // 1 = Smartphone-Kalender
 					$time_start = microtime(true);
 					$rest = \Httpful\Request::get($url)
@@ -114,7 +227,7 @@ class BackendOnlineAkte extends BackendDiff {
 					}
 					else {
 						if ($rest->hasBody())
-							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s, text: &s", $rest->code, print_r($rest->body, true)));
+							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
 						else
 							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s", $rest->code));
 					}
@@ -146,6 +259,7 @@ class BackendOnlineAkte extends BackendDiff {
 				// connector wird verwendet
 				$this->_baseUrlTermine = $baseUrlRelay . RELAY_REST_URL_TERMINE_SUFFIX;
 				$this->_baseUrlTodos = $baseUrlRelay . RELAY_REST_URL_TODOS_SUFFIX;
+                                $this->_urlSecurityGateway = $urlSecurityGateway;
 				ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest Found connector with %s folders and relayurl %s", count($this->_mitarbeiter), $baseUrlRelay));
 			}
 			$this->_usernameRest = $username_iso;
@@ -202,8 +316,8 @@ class BackendOnlineAkte extends BackendDiff {
 					mb_detect_encoding($this->_passwort, 'UTF-8', true) == "UTF-8" ? : $this->_passwort = utf8_encode($this->_passwort);
 					if ($this->_kanzlei == 'mltest') {
 						ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon(): password: [%s] encoded [%s]", $password, $this->_passwort));
-					}
-					return $this->LogonRest($username, $domain, $password);
+					}                                        
+                                        return $this->LogonRest($username, $domain, $password);
 				}
 			}
 			ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->Logon(): LogonKalenderSB failed! Kuerzel: %s Kanzlei: %s Datenbank: %s", $this->_kuerzel, $this->_kanzlei, $this->_datenbank));
