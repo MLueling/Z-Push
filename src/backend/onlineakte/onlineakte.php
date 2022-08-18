@@ -51,7 +51,7 @@ class BackendOnlineAkte extends BackendDiff {
 	private $_baseUrlTodos;
 	// Die Testkanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
 	//private $_testKanzleien = array('mltest', 'helpdesktermine', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
-	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann');
+	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'Steinbock-Partner', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus');
 	private $_testKanzleienAlleOrdner = array('mltest');
 
 	public function GetSupportedASVersion() {
@@ -699,8 +699,9 @@ class BackendOnlineAkte extends BackendDiff {
 			}
 		}
 		catch (Exception $fault) {
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): Fehler Start');
+			ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): Fehler Start folderid=%s id=%s", $folderid, $id));
 			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): ' . $fault->getMessage());
+			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): ' . print_r($fault, true));
 			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): Fehler Stop');
 			// Exception werfen entsprechend der Situation:
 
