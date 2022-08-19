@@ -241,6 +241,8 @@ class BackendOnlineAkte extends BackendDiff {
                 try {
                     // Schritt 1
                     // - Aktuelle Url Konfiguration der Kanzlei auslesen
+                    
+                    ToDo: Bei gültigen, gecachten Werten ist der folgende Aufruf überflüssig:
                     $this->GetUrlsFromAdvonetConfigurator();
                     if ($this->GetToken()) {
                         return true;
