@@ -173,7 +173,7 @@ class BackendOnlineAkte extends BackendDiff {
                         ->send();
                 if (!$rest->hasErrors()) {
                     if ($rest->hasBody()) {
-                        ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() tokenData=%s", $rest->body));
+                        ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() tokenData=%s", print_r($rest->body, true)));
                     }
                     $response = json_encode($rest->body);
                 } else {
