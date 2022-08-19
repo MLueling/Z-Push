@@ -57,13 +57,13 @@ class BackendOnlineAkte extends BackendDiff {
 	//private $_testKanzleien = array('mltest', 'helpdesktermine', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
 	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'Steinbock-Partner', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus');
 	private $_testKanzleienAlleOrdner = array('mltest');
-        private $_access_token;
+    private $_access_token;
 
 	public function GetSupportedASVersion() {
 		return ZPush::ASV_14;
 	}
 
-
+    
     private function GetUrlsFromAdvonetConfigurator() {
         // Holt die aktuelle Url Konfiguration der Kanzlei. Im Fehlerfall werden die Standardwerte aus der Konfiguration übernommen (config.php)
         if (!isset($this->_baseUrlTermine) || !isset($this->_baseUrlTodos) || !isset($this->_securityGatewayUrl) || !isset($this->_relayUrl)) {
@@ -79,19 +79,19 @@ class BackendOnlineAkte extends BackendDiff {
                 ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Check for Urls from AdvoNetConfigurator Executiontime: %f seconds", microtime(true) - $time_start));
                 if (!$rest->hasErrors()) {
                     ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Response from AdvoNetConfigurator: %s", print_r($rest->body, true)));
-                        if (isset($rest->body->relayUrl) && !empty($rest->body->relayUrl)) {
+                    if (isset($rest->body->relayUrl) && !empty($rest->body->relayUrl)) {
                         $relayUrl = $rest->body->relayUrl;
-                        }
-                        if (isset($rest->body->securityGateway) && !empty($rest->body->securityGateway)) {
+                    }
+                    if (isset($rest->body->securityGateway) && !empty($rest->body->securityGateway)) {
                         $securityGatewayUrl = $rest->body->securityGateway;
                     }
-                    } else {
-                        if ($rest->hasBody()) {
+                } else {
+                    if ($rest->hasBody()) {
                         ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Check for Urls from AdvoNetConfigurator error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
-                        } else {
+                    } else {
                         ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Check for Urls from AdvoNetConfigurator code: %s", $rest->code));
                     }
-                    }
+                }
             } catch (Exception $ex) {
                 ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Check for Urls from AdvoNetConfigurator exception: %s", $ex->getMessage()));
             }
@@ -115,7 +115,7 @@ class BackendOnlineAkte extends BackendDiff {
             // Achtung: Durch das cachen der BaseUrlRelay kann es zu Problemen nach der Änderung kommen. Passiert nur beim Testen, nicht produktiv...
             $redisKeyRelayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_relayUrl";
             $redisKeySecurityGatewayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_securityGatewayUrl";
-                                        
+
             $cachedTokenData = json_decode($redis->get($redisKeyTokenData));
             $folder = json_decode($redis->get($redisKeyFolder));
             $relayUrl = $redis->get($redisKeyRelayUrl);
@@ -157,14 +157,14 @@ class BackendOnlineAkte extends BackendDiff {
             ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 body=%s", $body));
             ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 ApiKey=%s", getenv('ZPUSH_ENV_SPK2_APIKEY')));
 
-                    // Testdaten bis insider SG aktualisiert ist
+            // Testdaten bis insider SG aktualisiert ist
             $responseDummy = '{
-                                    "token_type": "Bearer",
-                                    "expires_in": 36000,
+                                "token_type": "Bearer",
+                                "expires_in": 36000,
                                 "expiration_utc": "2022-08-18T21:42:08.9786042Z",
                                 "access_token": "eyJhbGciOiJSUzI1NiIsImtpZCI6IjM4ODA5NDk0NzJDRDVBMDlFRDlCMEUyMUFCMTExMTlBQjg3NkIxQTQiLCJ4NXQiOiJPSUNVbEhMTldnbnRtdzRocXhFUm1yaDJzYVEiLCJ0eXAiOiJKV1QifQ.eyJzdWIiOiJNYXR0aGlhcyBMw7xsaW5nIiwianRpIjoiNWZmODM1MWItZmE2NC00NzUwLWFmMjEtMWQ0OTI0MGZmMGE1IiwiS2FuemxlaSI6Im1sdGVzdCIsIkRhdGFiYXNlIjoiTUFUVEhJQVMxMiIsIkFwcElEIjoiU1BLXzIuMCIsIlByb2R1Y3QiOiJTbWFydHBob25lS2FsZW5kZXIiLCJSb2xlIjoiTWl0YXJiZWl0ZXIiLCJVc2VySUQiOiIxMyIsIlVzZXJTaG9ydCI6Ik1MIiwibmJmIjoxNjYwODIyOTI4LCJleHAiOjE2NjA4NTg5MjgsImlhdCI6MTY2MDgyMjkyOCwiaXNzIjoiYWR2b25ldFNlY3VyaXR5R2F0ZXdheSIsImF1ZCI6ImFkdm9uZXRVc2VyIn0.od7sv2eHxjsxdaAY99Yua10Y0ieYvlQzCR1fP5gA3zySXlG6oIQciLSsC-mIXbR_fDNdhfImMHxr94Wiw-qZU-dOtKZdGI57b6nb4phlYq0tQTn-qcmH9mLjcx2Ribctqsd6N_qWKQ8ystP2bHYtxM2X_L2G14Zh1D6ellwG67g_3aLeoBzG4BRlveIdV7hn0StJ9MWB5LiNMFAKGBPmSdzSSW8zX5WSZrmSrop1UhaVRkz8Fmw9JmsYv5acle9ArAbCHFNnfQygTAdks-IkPe0ZvwuCgSQ-z1CmC9OPBgETO16BjPL3MSfUushdPVWcE_O2GYDLDNb8_oOLhIOXxA",
-                                    "refresh_token": null
-                                }';
+                                "refresh_token": null
+                            }';
             try {
                 $rest = \Httpful\Request::post($this->_securityGatewayUrl . SECURITY_GATEWAY_TOKEN_URL_SUFFIX)
                         ->body($body)
@@ -176,14 +176,14 @@ class BackendOnlineAkte extends BackendDiff {
                     if ($rest->hasBody()) {
                         ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() tokenData=%s", $rest->body));
                     }
-                            $response = json_encode($rest->body);
+                    $response = json_encode($rest->body);
                 } else {
-                            if ($rest->hasBody()) {
+                    if ($rest->hasBody()) {
                         ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetToken() Get token error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
-                            } else {
+                    } else {
                         ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetToken() Get token error code: %s", $rest->code));
                     }
-                        }
+                }
             } catch (Exception $fault) {
                 ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->GetToken() Acquiring new token failed with exception: " . $fault->getMessage());
             }
@@ -217,14 +217,14 @@ class BackendOnlineAkte extends BackendDiff {
                     ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->GetToken() Got almost expired token with ttl = %d seconds", $diffInSeconds));
                 }
                 return true;
-                        } else {
+            } else {
                 ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Got invalid token, no expiration_utc or access_token!");
-                            return false;
+                return false;
             }
         } catch (Exception $ex) {
                     ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Acquiring new token failed with exception: " . $ex->getMessage());
         }
-                        return false;
+        return false;
     }
     /**
      * Login to the OnlineAkte backend
@@ -247,8 +247,8 @@ class BackendOnlineAkte extends BackendDiff {
                     }
                     
                     /*
-					// Schritt 4
-                                        // - Kuerzel (=folder) auslesen
+                    // Schritt 4
+                    // - Kuerzel (=folder) auslesen
                     // Kunden wollen die Ordne Ihrer Kollegen nicht sehen
 					$url = $baseUrlRelay . "api/v1/license/KuerzelForProduct/1"; // 1 = Smartphone-Kalender
 					$time_start = microtime(true);
@@ -271,7 +271,7 @@ class BackendOnlineAkte extends BackendDiff {
 						}
                     } else {
                         if ($rest->hasBody()) {
-							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
+                            ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
                         } else {
 							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s", $rest->code));
 					}
@@ -350,8 +350,8 @@ class BackendOnlineAkte extends BackendDiff {
 					mb_detect_encoding($this->_passwort, 'UTF-8', true) == "UTF-8" ? : $this->_passwort = utf8_encode($this->_passwort);
 					if ($this->_kanzlei == 'mltest') {
 						ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon(): password: [%s] encoded [%s]", $password, $this->_passwort));
-					}                                        
-                                        return $this->LogonRest($username, $domain, $password);
+                    }
+                    return $this->LogonRest($username, $domain, $password);
 				}
 			}
 			ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->Logon(): LogonKalenderSB failed! Kuerzel: %s Kanzlei: %s Datenbank: %s", $this->_kuerzel, $this->_kanzlei, $this->_datenbank));
