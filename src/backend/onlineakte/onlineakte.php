@@ -86,9 +86,9 @@ class BackendOnlineAkte extends BackendDiff {
                     }
                 } else {
                     if ($rest->hasBody()) {
-                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Check for Urls from AdvoNetConfigurator error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
+                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Error checking for Urls from AdvoNetConfigurator error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
                     } else {
-                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Check for Urls from AdvoNetConfigurator code: %s", $rest->code));
+                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Error checking for Urls from AdvoNetConfigurator: HTTP Status " . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
                     }
                 }
             } catch (Exception $ex) {
@@ -178,9 +178,9 @@ class BackendOnlineAkte extends BackendDiff {
                     $response = json_encode($rest->body);
                 } else {
                     if ($rest->hasBody()) {
-                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetToken() Get token error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
+                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetToken() Error getting token: error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
                     } else {
-                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetToken() Get token error code: %s", $rest->code));
+                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Error getting token: HTTP Status " . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
                     }
                 }
             } catch (Exception $fault) {
@@ -297,7 +297,7 @@ class BackendOnlineAkte extends BackendDiff {
                     if ($response->hasBody()) {
                         throw new Exception(print_r($response->body, true));
                     } else {
-                        throw new Exception("Unbekannter Fehler in LogonRest");
+                        throw new Exception('Fehler in LogonRest ohne Connector bei GET ' . $url . ': HTTP Status ' . $response->code . "\r\n\r\nHeaders: " . $response->raw_headers . "\r\n\r\nBody: " . $response->raw_body . "\r\n\r\n");
                     }
                 }
             } else {
@@ -621,7 +621,7 @@ class BackendOnlineAkte extends BackendDiff {
                 if ($rest->hasBody()) {
                     throw new Exception(print_r($rest->body, true));
                 } else {
-                    throw new Exception("Unbekannter Fehler in GetToDosFromOnlineAkteRest");
+                    throw new Exception('Fehler in GetToDosFromOnlineAkteRest bei GET ' . $url . ': HTTP Status ' . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
                 }
             }
             foreach ($rest->body as $todo) {
@@ -677,8 +677,7 @@ class BackendOnlineAkte extends BackendDiff {
                 if ($rest->hasBody()) {
                     throw new Exception(print_r($rest->body, true));
                 } else {
-                    throw new Exception('Fehler in GetEventsFromOnlineAkteRest: HTTP Status ' . $rest->code . "\r\n\r\n" . $rest->raw_headers . "\r\n\r\n" . $rest->raw_body . "\r\n\r\nRequest was: " . $rest->method . ': ' . $rest->uri . "\r\n" . $rest->raw_headers . "\r\n\r\n" . $rest->payload);
-                    //throw new Exception("Unbekannter Fehler in GetEventsFromOnlineAkteRest");
+                    throw new Exception('Fehler in GetEventsFromOnlineAkteRest: HTTP Status ' . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
                 }
             }
 
@@ -783,7 +782,7 @@ class BackendOnlineAkte extends BackendDiff {
                     if ($rest->hasBody()) {
                         throw new Exception(print_r($rest->body, true));
                     } else {
-                        throw new Exception("Unbekannter Fehler in GetEntryByUidFromOnlineAkte");
+                        throw new Exception('Fehler in GetEntryByUidFromOnlineAkte: HTTP Status ' . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
                     }
                 }
                 $response = array();
@@ -810,7 +809,7 @@ class BackendOnlineAkte extends BackendDiff {
                     if ($rest->hasBody()) {
                         throw new Exception(print_r($rest->body, true));
                     } else {
-                        throw new Exception("Unbekannter Fehler in GetEntryByUidFromOnlineAkte");
+                        throw new Exception('Fehler in GetEntryByUidFromOnlineAkte: HTTP Status ' . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
                     }
                 }
                 $response = array();
@@ -925,6 +924,7 @@ class BackendOnlineAkte extends BackendDiff {
                 if ($response->hasErrors()) {
                     ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest(): Could not add to %s . HTTP Staus code %s", $folderid, $response->code));
                     ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest(): Data \n%s\n", print_r($data, true)));
+                    ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest() HTTP Status " . $response->code . "\r\n\r\nHeaders: " . $response->raw_headers . "\r\n\r\nBody: " . $response->raw_body . "\r\n\r\n");
                     return false;
                 } else {
                     ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest(): returned body: %s", print_r($response->body, true)));
@@ -960,6 +960,7 @@ class BackendOnlineAkte extends BackendDiff {
                 ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
                 if ($response->hasErrors()) {
                     ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest(): Could not modify Object in folder %s with id %s. HTTP Staus code %s", $folderid, $data->FrNr, $response->code));
+                    ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest() HTTP Status " . $response->code . "\r\n\r\nHeaders: " . $response->raw_headers . "\r\n\r\nBody: " . $response->raw_body . "\r\n\r\n");
                     return false;
                 } else {
                     return $data->FrNr;
@@ -1181,6 +1182,7 @@ class BackendOnlineAkte extends BackendDiff {
             ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->DeleteMessageOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
             if ($response->hasErrors()) {
                 ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->DeleteMessageOnlineAkteRest(): Could not delete object with frnr %s in folder %s. HTTP Staus code %s", $frnr, $folderid, $response->code));
+                ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->DeleteMessageOnlineAkteRest() HTTP Status " . $response->code . "\r\n\r\nHeaders: " . $response->raw_headers . "\r\n\r\nBody: " . $response->raw_body . "\r\n\r\n");
                 return false;
             }
         } catch (Exception $fault) {
