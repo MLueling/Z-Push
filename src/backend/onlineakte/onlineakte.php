@@ -107,10 +107,11 @@ class BackendOnlineAkte extends BackendDiff {
         try {
             $redis = new Redis();
             $redis->connect(getenv('ZPUSH_ENV_SPK2_REDIS_SERVER'));
-            $redisKeyTokenData = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_tokenData";
-            $redisKeyFolder = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_folder";
-            $redisKeyRelayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_relayUrl";
-            $redisKeySecurityGatewayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_securityGatewayUrl";
+            $hash = hash('sha256', $this->_usernameRest . "_" . $this->_passwortRest . "_" . $this->_kanzlei . "_" . $this->_datenbank);
+            $redisKeyTokenData = $hash . "_tokenData";
+            $redisKeyFolder = $hash . "_folder";
+            $redisKeyRelayUrl = $hash . "_relayUrl";
+            $redisKeySecurityGatewayUrl = $hash . "_securityGatewayUrl";
             $redis->setex($redisKeyTokenData, $ttl, $this->_tokenData);
             $redis->setex($redisKeyFolder, $ttl, json_encode($this->_mitarbeiter));
             $redis->setex($redisKeyRelayUrl, $ttl, $this->_relayUrl);
@@ -126,11 +127,11 @@ class BackendOnlineAkte extends BackendDiff {
         try {
             $redis = new Redis();
             $redis->connect(getenv('ZPUSH_ENV_SPK2_REDIS_SERVER'));
-            $redisKeyTokenData = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_tokenData";
-            $redisKeyFolder = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_folder";
-            $redisKeyRelayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_relayUrl";
-            $redisKeySecurityGatewayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_securityGatewayUrl";
-
+            $hash = hash('sha256', $this->_usernameRest . "_" . $this->_passwortRest . "_" . $this->_kanzlei . "_" . $this->_datenbank);
+            $redisKeyTokenData = $hash . "_tokenData";
+            $redisKeyFolder = $hash . "_folder";
+            $redisKeyRelayUrl = $hash . "_relayUrl";
+            $redisKeySecurityGatewayUrl = $hash . "_securityGatewayUrl";
             $this->_tokenData = $redis->get($redisKeyTokenData);
             $folder = json_decode($redis->get($redisKeyFolder));
             $relayUrl = $redis->get($redisKeyRelayUrl);
