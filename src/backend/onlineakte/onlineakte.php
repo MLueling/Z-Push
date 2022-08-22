@@ -53,11 +53,11 @@ class BackendOnlineAkte extends BackendDiff {
     private $_baseUrlTermine;
     private $_baseUrlTodos;
     private $_securityGatewayUrl;
-    // Die Testkanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
-    //private $_testKanzleien = array('mltest', 'helpdesktermine', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
-    private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'Steinbock-Partner', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus');
-    private $_testKanzleienAlleOrdner = array('mltest');
+    // Die $_connectorKanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
+    private $_connectorKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'tietje', 'kanzlei boehling', 'wns2015', 'e&h', 'e&amp;h', 'atticus');
+    private $_connectorKanzleienAlleOrdner = array('mltestXXX'); // Hier kann für eine Kanzlei aktiviert werden, dass alle Ordner anezeigt werden also auch die anderen Mitarbeiter
     private $_access_token;
+    private $_tokenData;
 
     public function GetSupportedASVersion() {
         return ZPush::ASV_14;
@@ -102,27 +102,43 @@ class BackendOnlineAkte extends BackendDiff {
         ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Using Relay=%s SecurityGateway=%s", $this->_relayUrl, $this->_securityGatewayUrl));
     }
 
-    private function GetToken() {
-        // - Prüfen ob in Redis bereits ein gültiges Token gespeichert ist
+    private function CacheConfig($ttl) {
+        // Die ausgelesene Konfigruation + token in den Cache schreiben
         try {
             $redis = new Redis();
             $redis->connect('redis-advonet-insider'); // ToDo: auslagern in container config
-            //$dummy = $redis->ping('helloredis');
-            //ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->Logon('%s')", $dummy));
-            $redisKeyTokenData = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_tokendata";
+            $redisKeyTokenData = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_tokenData";
             $redisKeyFolder = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_folder";
-            // Achtung: Durch das cachen der BaseUrlRelay kann es zu Problemen nach der Änderung kommen. Passiert nur beim Testen, nicht produktiv...
+            $redisKeyRelayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_relayUrl";
+            $redisKeySecurityGatewayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_securityGatewayUrl";
+            $redis->setex($redisKeyTokenData, $ttl, $this->_tokenData);
+            $redis->setex($redisKeyFolder, $ttl, json_encode($this->_mitarbeiter));
+            $redis->setex($redisKeyRelayUrl, $ttl, $this->_relayUrl);
+            $redis->setex($redisKeySecurityGatewayUrl, $ttl, $this->_securityGatewayUrl);
+        } catch (Exception $ex) {
+            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->CacheConfig() Error: " . $ex->getMessage());            
+        }
+    }
+
+    private function GetCachedConfig() {
+        // Prüfen ob in Redis bereits ein gültiges Token und sonstige Konfigurationsdaten gespeichert sind
+        // Achtung: Durch das cachen der RelayUrl / SecurityGatewayUrl kann es zu Problemen nach deren Änderung kommen. Passiert nur beim Testen, nicht produktiv...
+        try {
+            $redis = new Redis();
+            $redis->connect('redis-advonet-insider'); // ToDo: auslagern in container config
+            $redisKeyTokenData = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_tokenData";
+            $redisKeyFolder = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_folder";
             $redisKeyRelayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_relayUrl";
             $redisKeySecurityGatewayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_securityGatewayUrl";
 
-            $cachedTokenData = json_decode($redis->get($redisKeyTokenData));
+            $this->_tokenData = $redis->get($redisKeyTokenData);
             $folder = json_decode($redis->get($redisKeyFolder));
             $relayUrl = $redis->get($redisKeyRelayUrl);
             $securityGatewayUrl = $redis->get($redisKeySecurityGatewayUrl);
-            if (!empty($cachedTokenData) && !empty($folder) && !empty($relayUrl) && !empty($securityGatewayUrl)) {
+            if (!empty($this->_tokenData) && !empty($folder) && !empty($relayUrl) && !empty($securityGatewayUrl)) {
+                $cachedTokenData = json_decode($this->_tokenData);
                 if (isset($cachedTokenData->expiration_utc) && (strlen($cachedTokenData->expiration_utc) > 0) && (strlen($cachedTokenData->access_token) > 0)) {
                     $tokenExpirationUtc = date_create_from_format('Y-m-d\TH:i:s\Z', substr($cachedTokenData->expiration_utc, 0, strpos($cachedTokenData->expiration_utc, '.')) . 'Z', timezone_open("UTC"));
-                    //$tokenExpirationUtc = date_create_from_format("", $cachedTokenData->expiration_utc, new DateTimeZone("UTC"));
                     $objDateTimeNow = new DateTime('NOW');
                     $objDateTimeNow->setTimezone(new DateTimeZone("UTC"));
                     $diffInMinutes = intdiv($tokenExpirationUtc->getTimestamp() - $objDateTimeNow->getTimestamp(), 60);
@@ -132,16 +148,20 @@ class BackendOnlineAkte extends BackendDiff {
                     $this->_baseUrlTodos = $relayUrl . RELAY_REST_URL_TODOS_SUFFIX;
                     $this->_securityGatewayUrl = $securityGatewayUrl;
                     $this->_access_token = $cachedTokenData->access_token;
-                    ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() Found cached token valid for %d minutes.", $diffInMinutes));
-                    // gespeichertes token verwenden
+                    ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetCachedConfig() Found cached config valid for %d minutes.", $diffInMinutes));
                     return true;
                 }
             }
         } catch (Exception $ex) {
-            ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->GetToken() Acquiring token from cache failed with exception: " . $ex->getMessage());
+            ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->GetCachedConfig() Acquiring config from cache failed with exception: " . $ex->getMessage());
         }
+        $this->_tokenData = "";
+        return false;
+    }
 
+    private function GetToken() {
         // Neues Token vom Security Gateway anfordern
+        // Return: Gültigkeit des Token in Sekunden oder 0 bei Fehler
         try {
             $identityHMAC = new IdentityHMAC();
             $identityHMAC->AppID = "SPK_2.0";
@@ -155,6 +175,7 @@ class BackendOnlineAkte extends BackendDiff {
             $body = $identityHMAC->Sign(getenv('ZPUSH_ENV_SPK2_APIKEY'));
             ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 body=%s", $body));
             ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 ApiKey=%s", getenv('ZPUSH_ENV_SPK2_APIKEY')));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 ApiKey=%d", getenv('ZPUSH_ENV_SPK2_MIN_TOKEN_VALIDITY_SECONDS')));
 
             // Testdaten bis insider SG aktualisiert ist
             $responseDummy = '{
@@ -199,31 +220,58 @@ class BackendOnlineAkte extends BackendDiff {
                 $objDateTimeNow->setTimezone(new DateTimeZone("UTC"));
                 $diffInSeconds = $tokenExpirationUtc->getTimestamp() - $objDateTimeNow->getTimestamp();
 
-                $this->_mitarbeiter[] = $this->_kuerzel; // ToDo: Hier geht die Unterstüzung für mehrere Ordner verloren
-                $this->_access_token = $tokenData->access_token;
-                if ($diffInSeconds >= 120) {
-                    $ttl = $diffInSeconds - 120; // 2 Minuten vor Ablauf des token diesen aus dem Cache löschen
+                if ($diffInSeconds >= intval(getenv('ZPUSH_ENV_SPK2_MIN_TOKEN_VALIDITY_SECONDS'))) {
+                    $ttl = $diffInSeconds - intval(getenv('ZPUSH_ENV_SPK2_MIN_TOKEN_VALIDITY_SECONDS')); // x Sekunden vor Ablauf des token diesen aus dem Cache löschen
                     if (isset($response)) {
-                        $redis->setex($redisKeyTokenData, $ttl, $response);
+                        $this->_tokenData = $response;
                     } else {
-                        $redis->setex($redisKeyTokenData, $ttl, $responseDummy);
+                        $this->_tokenData = $responseDummy;
                     }
-                    $redis->setex($redisKeyFolder, $ttl, json_encode($this->_mitarbeiter));
-                    $redis->setex($redisKeyRelayUrl, $ttl, $this->_relayUrl);
-                    $redis->setex($redisKeySecurityGatewayUrl, $ttl, $this->_securityGatewayUrl);
+                    $this->_access_token = $tokenData->access_token;
                     ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->GetToken() Got new token with ttl = %d minutes", intdiv($diffInSeconds, 60)));
+                    return $ttl;
                 } else {
-                    ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->GetToken() Got almost expired token with ttl = %d seconds", $diffInSeconds));
+                    ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetToken() Got almost expired token with ttl = %d seconds", $diffInSeconds));
                 }
-                return true;
             } else {
                 ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Got invalid token, no expiration_utc or access_token!");
-                return false;
             }
         } catch (Exception $ex) {
             ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Acquiring new token failed with exception: " . $ex->getMessage());
         }
-        return false;
+        return 0;
+    }
+
+    private function GetMitarbeiter() {
+        // - Mitarbeiter  (=folder) auslesen
+        // Kunden wollen die Ordner Ihrer Kollegen bisher nicht sehen
+        
+        if (!in_array(strtolower($this->_kanzlei), $this->_connectorKanzleienAlleOrdner)) {
+            $this->_mitarbeiter[] = $this->_kuerzel;            
+        } else {
+            // ToDo: Wenn die Ordnerunterstützung nach der Abschaltung von Basic Auth wieder gehen soll muss hier und
+            // im SecurityGateway angepasst und das token verwendet werden 
+            $url = $this->_relayUrl . "api/v1/license/KuerzelForProduct/1"; // 1 = Smartphone-Kalender
+            $time_start = microtime(true);
+            $rest = \Httpful\Request::get($url)
+                    ->expectsJson()
+                    ->authenticateWith($this->_usernameRest, $this->_passwortRest)
+                    ->timeout(15)
+                    ->send();
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetMitarbeiter() Check for connector Executiontime: %f seconds", microtime(true) - $time_start));
+            if (!$rest->hasErrors()) {
+                ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetMitarbeiter() Response KuerzelForProduct/1: %s", print_r($rest->body, true)));
+                foreach ($rest->body as $folder) {
+                    $this->_mitarbeiter[] = $folder;
+                }
+            } else {
+                if ($rest->hasBody()) {
+                    ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetMitarbeiter() Error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
+                } else {
+                    ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetMitarbeiter() Error: HTTP Status " . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
+                }
+            }
+        }
     }
 
     /**
@@ -237,50 +285,22 @@ class BackendOnlineAkte extends BackendDiff {
             $this->_frnrSuffix = preg_replace("/[^A-Za-z0-9@#]/", "_", $username);
 
             // prüfen ob Kanzlei bereits connector verwendet
-            if (in_array(strtolower($this->_kanzlei), $this->_testKanzleien)) {
+            if (in_array(strtolower($this->_kanzlei), $this->_connectorKanzleien)) {
                 try {
-                    // Schritt 1
-                    // - Aktuelle Url Konfiguration der Kanzlei auslesen
-                    
-                    ToDo: Bei gültigen, gecachten Werten ist der folgende Aufruf überflüssig:
-                    $this->GetUrlsFromAdvonetConfigurator();
-                    if ($this->GetToken()) {
+                    if ($this->GetCachedConfig()) {
                         return true;
                     }
-
-                    /*
-                      // Schritt 4
-                      // - Kuerzel (=folder) auslesen
-                      // Kunden wollen die Ordne Ihrer Kollegen nicht sehen
-                      $url = $baseUrlRelay . "api/v1/license/KuerzelForProduct/1"; // 1 = Smartphone-Kalender
-                      $time_start = microtime(true);
-                      $rest = \Httpful\Request::get($url)
-                      ->expectsJson()
-                      ->authenticateWith($this->_usernameRest, $this->_passwortRest)
-                      ->timeout(15)
-                      ->send();
-                      ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Check for connector Executiontime: %f seconds", microtime(true) - $time_start));
-                      if (!$rest->hasErrors()) {
-                      ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Response KuerzelForProduct/1: %s", print_r($rest->body, true)));
-                      foreach($rest->body as $folder) {
-                      if (!in_array(strtolower($this->_kanzlei), $this->_testKanzleienAlleOrdner)) {
-                      if ($this->_kuerzel == $folder) {
-                      $this->_mitarbeiter[] = $folder;
-                      }
-                      } else {
-                      $this->_mitarbeiter[] = $folder;
-                      }
-                      }
-                      } else {
-                      if ($rest->hasBody()) {
-                      ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
-                      } else {
-                      ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s", $rest->code));
-                      }
-                      }
-                     */
+                    $this->GetUrlsFromAdvonetConfigurator();
+                    $this->GetMitarbeiter();
+                    $ttl = $this->GetToken();
+                    if ($ttl > 0) {
+                        $this->CacheConfig($ttl);
+                        return true;
+                    } else {
+                        return false;
+                    }
                 } catch (Exception $fault) {
-                    ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->LogonRest()Check for connector failed with exception: " . $fault->getMessage());
+                    ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->LogonRest() Check for connector failed with exception: " . $fault->getMessage());
                 }
             }
 
