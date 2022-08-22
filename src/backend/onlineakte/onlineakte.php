@@ -66,8 +66,8 @@ class BackendOnlineAkte extends BackendDiff {
     private function GetUrlsFromAdvonetConfigurator() {
         // Holt die aktuelle Url Konfiguration der Kanzlei. Im Fehlerfall werden die Standardwerte aus der Konfiguration übernommen (config.php)
         if (!isset($this->_baseUrlTermine) || !isset($this->_baseUrlTodos) || !isset($this->_securityGatewayUrl) || !isset($this->_relayUrl)) {
-            $relayUrl = RELAY_URL;
-            $securityGatewayUrl = SECURITY_GATEWAY_URL;
+            $relayUrl = getenv('ZPUSH_ENV_SPK2_DEFAULT_RELAY_URL');
+            $securityGatewayUrl = getenv('ZPUSH_ENV_SPK2_DEFAULT_SECURITY_GATEWAY_URL');
             $urlConfigurator = ADVONET_CONFIGURATOR_URL . ADVONET_CONFIGURATOR_URL_SUFFIX . urlencode($this->_kanzlei);
             try {
                 $time_start = microtime(true);
@@ -106,7 +106,7 @@ class BackendOnlineAkte extends BackendDiff {
         // Die ausgelesene Konfigruation + token in den Cache schreiben
         try {
             $redis = new Redis();
-            $redis->connect('redis-advonet-insider'); // ToDo: auslagern in container config
+            $redis->connect(getenv('ZPUSH_ENV_SPK2_REDIS_SERVER'));
             $redisKeyTokenData = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_tokenData";
             $redisKeyFolder = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_folder";
             $redisKeyRelayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_relayUrl";
@@ -125,7 +125,7 @@ class BackendOnlineAkte extends BackendDiff {
         // Achtung: Durch das cachen der RelayUrl / SecurityGatewayUrl kann es zu Problemen nach deren Änderung kommen. Passiert nur beim Testen, nicht produktiv...
         try {
             $redis = new Redis();
-            $redis->connect('redis-advonet-insider'); // ToDo: auslagern in container config
+            $redis->connect(getenv('ZPUSH_ENV_SPK2_REDIS_SERVER'));
             $redisKeyTokenData = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_tokenData";
             $redisKeyFolder = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_folder";
             $redisKeyRelayUrl = $this->_kuerzel . "_" . $this->_kanzlei . "_" . $this->_datenbank . "_relayUrl";
@@ -173,9 +173,13 @@ class BackendOnlineAkte extends BackendDiff {
             $identityHMAC->Product = 1;
 
             $body = $identityHMAC->Sign(getenv('ZPUSH_ENV_SPK2_APIKEY'));
-            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 body=%s", $body));
-            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 ApiKey=%s", getenv('ZPUSH_ENV_SPK2_APIKEY')));
-            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 ApiKey=%d", getenv('ZPUSH_ENV_SPK2_MIN_TOKEN_VALIDITY_SECONDS')));
+            //ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 body=%s", $body));
+            //ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() SPK2.0 ApiKey=%s", getenv('ZPUSH_ENV_SPK2_APIKEY')));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() ZPUSH_ENV_SPK2_MIN_TOKEN_VALIDITY_SECONDS=%d", getenv('ZPUSH_ENV_SPK2_MIN_TOKEN_VALIDITY_SECONDS')));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() ZPUSH_ENV_SPK2_REDIS_SERVER=%s", getenv('ZPUSH_ENV_SPK2_REDIS_SERVER')));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() ZPUSH_ENV_SPK2_ADVONET_URL_CONFIGURATOR_URL=%s", getenv('ZPUSH_ENV_SPK2_ADVONET_URL_CONFIGURATOR_URL')));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() ZPUSH_ENV_SPK2_DEFAULT_RELAY_URL=%s", getenv('ZPUSH_ENV_SPK2_DEFAULT_RELAY_URL')));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() ZPUSH_ENV_SPK2_DEFAULT_SECURITY_GATEWAY_URL=%s", getenv('ZPUSH_ENV_SPK2_DEFAULT_SECURITY_GATEWAY_URL')));
 
             // Testdaten bis insider SG aktualisiert ist
             $responseDummy = '{
