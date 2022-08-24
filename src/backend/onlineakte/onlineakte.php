@@ -68,7 +68,7 @@ class BackendOnlineAkte extends BackendDiff {
         if (!isset($this->_baseUrlTermine) || !isset($this->_baseUrlTodos) || !isset($this->_securityGatewayUrl) || !isset($this->_relayUrl)) {
             $relayUrl = getenv('ZPUSH_ENV_SPK2_DEFAULT_RELAY_URL');
             $securityGatewayUrl = getenv('ZPUSH_ENV_SPK2_DEFAULT_SECURITY_GATEWAY_URL');
-            $urlConfigurator = ADVONET_CONFIGURATOR_URL . ADVONET_CONFIGURATOR_URL_SUFFIX . urlencode($this->_kanzlei);
+            $urlConfigurator = getenv('ZPUSH_ENV_SPK2_ADVONET_URL_CONFIGURATOR_URL') . urlencode($this->_kanzlei);
             try {
                 $time_start = microtime(true);
                 $rest = \Httpful\Request::get($urlConfigurator)
