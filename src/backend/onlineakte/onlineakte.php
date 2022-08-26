@@ -21,7 +21,9 @@ include_once('lib/default/diffbackend/diffbackend.php');
 include('httpful.phar');
 define("FEHLER_NICHT_FREIGESCHALTET", "freigeschaltet"); // Produkt oder SB nicht freigeschaltet
 define("FEHLER_NICHT_ANGEMELDET", "ist nicht angemeldet"); // Kanzlei / Datenbank ist nicht angemeldet
+define("FEHLER_NICHT_REGISTRIERT", "ist nicht registriert"); // Kanzlei / Datenbank ist nicht registriert
 define("FEHLER_FALSCHES_KENNWORT", "Falscher Name oder falsches Kennwort");
+define("FEHLER_FALSCHES_KENNWORT_2", 'Benutzer / Kennwort ung');
 
 class OnlineakteException extends HTTPReturnCodeException {
 
@@ -163,6 +165,9 @@ class BackendOnlineAkte extends BackendDiff {
     private function GetToken() {
         // Neues Token vom Security Gateway anfordern
         // Return: Gültigkeit des Token in Sekunden oder 0 bei Fehler
+        
+        $exceptionMsg = "Error getting token: Unknown Error in GetToken";
+        
         try {
             $identityHMAC = new IdentityHMAC();
             $identityHMAC->AppID = "SPK_2.0";
@@ -178,14 +183,14 @@ class BackendOnlineAkte extends BackendDiff {
             try {
                 $rest = \Httpful\Request::post($this->_securityGatewayUrl . SECURITY_GATEWAY_TOKEN_URL_SUFFIX)
                         ->body($body)
-                        ->expectsJson()
+//                        ->expectsJson()
                         ->timeout(15)
                         ->sendsJson()
                         ->send();
                 if (!$rest->hasErrors()) {
                     if ($rest->hasBody()) {
-                        ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() tokenData=%s", print_r($rest->body, true)));
-                        $tokenData = $rest->body;
+                        $tokenData = json_decode($rest->body);
+                        ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() tokenData=%s", print_r($tokenData, true)));
                         if (isset($tokenData->expiration_utc) && (strlen($tokenData->expiration_utc) > 0) && (strlen($tokenData->access_token) > 0)) {
                             $tokenExpirationUtc = date_create_from_format('Y-m-d\TH:i:s\Z', substr($tokenData->expiration_utc, 0, strpos($tokenData->expiration_utc, '.')) . 'Z', timezone_open("UTC"));
                             //$tokenExpirationUtc = date_create_from_format("", $tokenData->expiration_utc, new DateTimeZone("UTC"));
@@ -200,29 +205,36 @@ class BackendOnlineAkte extends BackendDiff {
                                 ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->GetToken() Got new token with ttl = %d minutes", intdiv($diffInSeconds, 60)));
                                 return $ttl;
                             } else {
-                                ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetToken() Got expired token with ttl = %d seconds", $diffInSeconds));
+                                $exceptionMsg = sprintf("Error getting token: Got expired token with ttl = %d seconds", $diffInSeconds);
+                                ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
                             }
                         } else {
-                            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Got invalid token, no expiration_utc or access_token!");
+                            $exceptionMsg = "Error getting token: Got invalid token, no expiration_utc or access_token!";
+                            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
                         }
                     } else {
-                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Got response without body!");                        
+                        $exceptionMsg = "Error getting token: Got response without body!";
+                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);                        
                     }
                 } else {
                     if ($rest->hasBody()) {
-                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetToken() Error getting token: error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
+                        $exceptionMsg = sprintf("Error getting token: HTTP status: %s, Body: %s", $rest->code, print_r($rest->body, true));
+                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
                     } else {
+                        $exceptionMsg = "Error getting token: HTTP Status: " . $rest->code . " Body: " . $rest->raw_body;
                         ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Error getting token: HTTP Status " . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
                     }
                 }
             } catch (Exception $fault) {
-                ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->GetToken() Acquiring new token failed with exception: " . $fault->getMessage());
+                $exceptionMsg = "Error getting token: Acquiring new token failed with exception: " . $fault->getMessage();
+                ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
             }
 
         } catch (Exception $ex) {
-            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() failed with exception: " . $ex->getMessage());
+            $exceptionMsg = "Error getting token: Failed with exception: " . $ex->getMessage();
+            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
         }
-        return 0;
+        throw new Exception($exceptionMsg);
     }
 
     private function GetMitarbeiter() {
@@ -269,21 +281,15 @@ class BackendOnlineAkte extends BackendDiff {
 
             // prüfen ob Kanzlei bereits connector verwendet
             if (in_array(strtolower($this->_kanzlei), $this->_connectorKanzleien)) {
-                try {
-                    if ($this->GetCachedConfig()) {
-                        return true;
-                    }
-                    $this->GetUrlsFromAdvonetConfigurator();
-                    $this->GetMitarbeiter();
-                    $ttl = $this->GetToken();
-                    if ($ttl > 0) {
-                        $this->CacheConfig($ttl);
-                        return true;
-                    } else {
-                        return false;
-                    }
-                } catch (Exception $fault) {
-                    ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->LogonRest() Check for connector failed with exception: " . $fault->getMessage());
+                if ($this->GetCachedConfig()) {
+                    return true;
+                }
+                $this->GetUrlsFromAdvonetConfigurator();
+                $this->GetMitarbeiter();
+                $ttl = $this->GetToken();
+                if ($ttl > 0) {
+                    $this->CacheConfig($ttl);
+                    return true;
                 }
             }
 
@@ -312,17 +318,13 @@ class BackendOnlineAkte extends BackendDiff {
             return true;
         } catch (Exception $fault) {
             ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Username: %s Exception: %s", $this->_usernameRest, $fault->getMessage()));
-            // Exception werfen entsprechend der Situation:
-            if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET) !== false) {
-                throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET) !== false) {
-                throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT) !== false) {
+            if (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT) !== false) {
+                // Nichts machen, am Ende wird false zurück gegeben was zu einer AuthenticationRequiredException führt
+            } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT_2) !== false) {
                 // Nichts machen, am Ende wird false zurück gegeben was zu einer AuthenticationRequiredException führt
             } else {
-                throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
+                $this->ThrowAdvoNetException($fault);
             }
-            return false;
         }
         return false;
     }
@@ -635,21 +637,32 @@ class BackendOnlineAkte extends BackendDiff {
             }
         } catch (Exception $fault) {
             ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetToDosFromOnlineAkteRest() Exception: ' . $fault->getMessage());
-            // Exception werfen entsprechend der Situation:
-
-            if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
-                throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
-                throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
-                throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
-            } else {
-                throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
-            }
+            $this->ThrowAdvoNetException($fault);
         }
         return $report;
     }
 
+    function ThrowAdvoNetException($fault) {
+        // Exception werfen entsprechend der Situation:
+        if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
+            throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
+        } elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
+            throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
+        } elseif (strpos($fault->getMessage(), FEHLER_NICHT_REGISTRIERT)) {
+            throw new OnlineakteException("AdvoNet Connector Fehler", 503);
+        } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
+            throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
+        } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT_2)) {
+            throw new OnlineakteException("AdvoNet Anmeldefehler", 503);
+        } else {
+            if ($this->UseConnector()) {
+                throw new OnlineakteException("AdvoNet Netzwerkfehler", 503);                    
+            } else {
+                throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
+            }
+        }
+    }
+    
     function GetEventsFromOnlineAkteRest($folderid, $start = null, $finish = null) {
         ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetEventsFromOnlineAkteRest('%s', %s','%s')", $folderid, $start, $finish));
         $report = array();
@@ -690,17 +703,7 @@ class BackendOnlineAkte extends BackendDiff {
             }
         } catch (Exception $fault) {
             ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEventsFromOnlineAkteRest() Exception: ' . $fault->getMessage());
-            // Exception werfen entsprechend der Situation:
-
-            if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
-                throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
-                throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
-                throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
-            } else {
-                throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
-            }
+            $this->ThrowAdvoNetException($fault);
         }
         return $report;
     }
@@ -822,17 +825,7 @@ class BackendOnlineAkte extends BackendDiff {
             ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() ' . $fault->getMessage());
             ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() ' . print_r($fault, true));
             ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() Fehler Stop');
-            // Exception werfen entsprechend der Situation:
-
-            if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
-                throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
-                throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
-                throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
-            } else {
-                throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
-            }
+            $this->ThrowAdvoNetException($fault);
         }
 
         return $report;
@@ -966,16 +959,7 @@ class BackendOnlineAkte extends BackendDiff {
             }
         } catch (Exception $fault) {
             ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest() Exception: " . $fault->getMessage());
-            // Exception werfen entsprechend der Situation:
-            if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
-                throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
-                throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-            } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
-                throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
-            } else {
-                throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
-            }
+            $this->ThrowAdvoNetException($fault);
         }
     }
 
