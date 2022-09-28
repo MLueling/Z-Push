@@ -183,13 +183,14 @@ class BackendOnlineAkte extends BackendDiff {
             try {
                 $rest = \Httpful\Request::post($this->_securityGatewayUrl . SECURITY_GATEWAY_TOKEN_URL_SUFFIX)
                         ->body($body)
-//                        ->expectsJson()
+                        ->expectsJson()
                         ->timeout(15)
                         ->sendsJson()
                         ->send();
                 if (!$rest->hasErrors()) {
                     if ($rest->hasBody()) {
-                        $tokenData = json_decode($rest->body);
+                        //$tokenData = json_decode($rest->body);
+                        $tokenData = $rest->body;
                         ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() tokenData=%s", print_r($tokenData, true)));
                         if (isset($tokenData->expiration_utc) && (strlen($tokenData->expiration_utc) > 0) && (strlen($tokenData->access_token) > 0)) {
                             $tokenExpirationUtc = date_create_from_format('Y-m-d\TH:i:s\Z', substr($tokenData->expiration_utc, 0, strpos($tokenData->expiration_utc, '.')) . 'Z', timezone_open("UTC"));
