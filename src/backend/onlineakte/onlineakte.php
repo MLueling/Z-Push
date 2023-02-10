@@ -51,7 +51,7 @@ class BackendOnlineAkte extends BackendDiff {
 	private $_baseUrlTodos;
 	// Die Testkanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
 	//private $_testKanzleien = array('mltest', 'helpdesktermine', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
-	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'Steinbock-Partner', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus');
+	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'Steinbock-Partner', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus', 'ra-holler', 'durach', 'KoppundPartner', 'KoppPartner', 'ystest', 'rechtsanwaelte-telgte', 'RSCW', 'Kanzlei Vlachou', 'Schwertle & Schwertle', 'birkholz');
 	private $_testKanzleienAlleOrdner = array('mltest');
 
 	public function GetSupportedASVersion() {
