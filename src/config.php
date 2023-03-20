@@ -125,10 +125,10 @@
     define('LOGUSERLEVEL', LOGLEVEL_DEVICEID);
     //$specialLogUsers = array('ml##meissner##advoware', 'ML##Meissner##ADVOWARE');
     if ((getenv('TEST_LOCAL') == true) or (getenv('TEST_PROD') == true)) {
-        $specialLogUsers = array('ML##ubtest##TESTUWE', 'ml##ubtest##testuwe', 'UB##ubtest##TESTUWE', 'ub##ubtest##testuwe');
+        $specialLogUsers = array('1@@steinbock-partner@@advoware', '1@@Steinbock-Partner@@ADVOWARE', 'ML##ubtest##TESTUWE', 'ml##ubtest##testuwe', 'UB##ubtest##TESTUWE', 'ub##ubtest##testuwe');
     }
     else {
-        $specialLogUsers = array();
+        $specialLogUsers = array('1@@steinbock-partner@@advoware', '1@@Steinbock-Partner@@ADVOWARE');
     }
 
     // Filelog settings
