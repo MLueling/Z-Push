@@ -51,7 +51,9 @@ class BackendOnlineAkte extends BackendDiff {
 	private $_baseUrlTodos;
 	// Die Testkanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
 	//private $_testKanzleien = array('mltest', 'helpdesktermine', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
-	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'Steinbock-Partner', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus', 'ra-holler', 'durach', 'KoppundPartner', 'KoppPartner', 'ystest', 'rechtsanwaelte-telgte', 'RSCW', 'Kanzlei Vlachou', 'Schwertle & Schwertle', 'birkholz', 'kanzleibischof');
+	//private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'Steinbock-Partner', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus', 'ra-holler', 'durach', 'KoppundPartner', 'KoppPartner', 'ystest', 'rechtsanwaelte-telgte', 'RSCW', 'Kanzlei Vlachou', 'Schwertle & Schwertle', 'birkholz', 'kanzleibischof');
+	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'advocateassociate', 'kanzlei krone', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus', 'ra-holler', 'durach', 'KoppundPartner', 'KoppPartner', 'ystest', 'rechtsanwaelte-telgte', 'RSCW', 'Kanzlei Vlachou', 'Schwertle & Schwertle', 'birkholz', 'kanzleibischof', 'Kanzleien am Hohenzollernring', 'f-r-p', 'gabriele-hertel', 'osh', 'bboehle', 'raschmutz', 'anwalttaunusstein', 'ra-rausse', 'kanzlei kieper', 'rechtsanwalt-hoyer', 'rageissler', 'rechtsanwaltpauli', 'krüger-kirmess', 'chs rechtsanwaelte', 'kanzlei-thuemlein', 'raemoser' );
+        private $_forceConnector = array('steinbock-partner'); // kein Fallback auf Freigabediennst
 	private $_testKanzleienAlleOrdner = array('mltest');
 
 	public function GetSupportedASVersion() {
@@ -68,7 +70,18 @@ class BackendOnlineAkte extends BackendDiff {
 			$password_iso = mb_convert_encoding($password, "ISO-8859-1", "UTF-8");
 
                         // prüfen ob Kanzlei bereits connector verwendet
-			if (in_array(strtolower($this->_kanzlei), $this->_testKanzleien)) {
+//			if (strpos(strtolower($this->_kanzlei), 'kirmess') !== false) {
+//				$kanzlei_iso = mb_convert_encoding($this->_kanzlei, "UTF-8", "ISO-8859-1");
+//				ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest() this->_kanzlei = %s iso = %s tolower = %s", $this->_kanzlei, $kanzlei_iso, mb_strtolower($this->_kanzlei)));
+//				ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest() iso %s", print_r($this->_testKanzleien,true)));
+//				$unpack1 = unpack('C*', strtolower($kanzlei_iso));
+//				$unpack2 = unpack('C*', 'krüger-kirmess');
+				//$normalized1 = unpack('C*', normalizer_normalize(strtolower($this->_kanzlei)));
+				//$normalized2 = unpack('C*', normalizer_normalize('krüger-kirmess'));
+//				ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest() iso [1] %s [2] %s", print_r($unpack1, true), print_r($unpack2, true)));
+				//ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest() iso normalized [1] %s [2] %s", print_r($normalized1, true), print_r($normalized2, true)));
+//			}
+			if (in_array(mb_strtolower($this->_kanzlei), $this->_testKanzleien)) {
 				try {
 					// Schritt 1: AdvonetConfigurator nach der Relay Url fragen
 					$baseUrlRelay = RELAY_BASE_URL;
@@ -419,7 +432,16 @@ class BackendOnlineAkte extends BackendDiff {
 
 	private function UseConnector() 
 	{
-		return !empty($this->_mitarbeiter);
+		if (in_array(strtolower($this->_kanzlei), $this->_forceConnector)) {
+                    if (empty($this->_mitarbeiter)) {
+		        ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->UseConnector Forcing connector usage for '%s'", $this->_kanzlei));
+                        $this->_mitarbeiter[] = $this->_kuerzel;
+                    }
+                    return true;
+                }
+                else {
+                    return !empty($this->_mitarbeiter);
+                }
 	}
 
 	private function getKuerzelFromFolderId($folderid) {
