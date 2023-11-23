@@ -1,4 +1,5 @@
 <?php
+
 /***********************************************
 * File      :   onlineakte.php
 * Project   :   PHP-Push
@@ -14,24 +15,27 @@
 ************************************************/
 
 require_once("backend/onlineakte/config.php");
+require_once("backend/onlineakte/IdentityHMAC.php");
+require_once("backend/onlineakte/NewTokenData.php");
 include_once('lib/default/diffbackend/diffbackend.php');
 include('httpful.phar');
-//include_once('include/z_RTF.php');
-//include_once('/usr/share/awl/inc/iCalendar.php');
-//require_once('vendor/autoload.php');
-//require 'vendor/autoload.php';
 define("FEHLER_NICHT_FREIGESCHALTET", "freigeschaltet"); // Produkt oder SB nicht freigeschaltet
 define("FEHLER_NICHT_ANGEMELDET", "ist nicht angemeldet"); // Kanzlei / Datenbank ist nicht angemeldet
+define("FEHLER_NICHT_REGISTRIERT", "ist nicht registriert"); // Kanzlei / Datenbank ist nicht registriert
 define("FEHLER_FALSCHES_KENNWORT", "Falscher Name oder falsches Kennwort");
+define("FEHLER_FALSCHES_KENNWORT_2", 'Benutzer / Kennwort ung');
 
 class OnlineakteException extends HTTPReturnCodeException {
+
 	protected $httpHeaders = array('Retry-After: 70');
 
 	public function __construct($message = "", $code = 0, $previous = NULL, $logLevel = false) {
-		if ($code)
+        if ($code) {
 			$this->httpReturnCode = $code;
+        }
 		parent::__construct($message, (int) $code, $previous, $logLevel);
 	}
+
 }
 
 class BackendOnlineAkte extends BackendDiff {
@@ -47,93 +51,247 @@ class BackendOnlineAkte extends BackendDiff {
 	private $_passwort;
 	private $_passwortRest;
 	private $_mitarbeiter = array(); // Kuerzel
+    private $_relayUrl;
 	private $_baseUrlTermine;
 	private $_baseUrlTodos;
-	// Die Testkanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
-	//private $_testKanzleien = array('mltest', 'helpdesktermine', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner');
-	//private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'Steinbock-Partner', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus', 'ra-holler', 'durach', 'KoppundPartner', 'KoppPartner', 'ystest', 'rechtsanwaelte-telgte', 'RSCW', 'Kanzlei Vlachou', 'Schwertle & Schwertle', 'birkholz', 'kanzleibischof');
-	private $_testKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'advocateassociate', 'kanzlei krone', 'kanzleiskks', 'kanzlei-qlb', 'Tietje', 'tietje', 'kanzlei boehling', 'WNS2015', 'wns2015', 'e&h', 'E&amp;H', 'E&H', 'e&amp;h', 'atticus', 'ra-holler', 'durach', 'KoppundPartner', 'KoppPartner', 'ystest', 'rechtsanwaelte-telgte', 'RSCW', 'Kanzlei Vlachou', 'Schwertle & Schwertle', 'birkholz', 'kanzleibischof', 'Kanzleien am Hohenzollernring', 'f-r-p', 'gabriele-hertel', 'osh', 'bboehle', 'raschmutz', 'anwalttaunusstein', 'ra-rausse', 'kanzlei kieper', 'rechtsanwalt-hoyer', 'rageissler', 'rechtsanwaltpauli', 'krüger-kirmess', 'chs rechtsanwaelte', 'kanzlei-thuemlein', 'raemoser' );
-        private $_forceConnector = array('steinbock-partner'); // kein Fallback auf Freigabediennst
-	private $_testKanzleienAlleOrdner = array('mltest');
+    private $_securityGatewayUrl;
+    // Die $_connectorKanzleien können zu einem späteren Zeitpunkt wieder entfernt werden
+    private $_connectorKanzleien = array('mltest', 'legiteamgmbh2', 'stephan korb', 'steinbock-partner', 'helpdesktermine', 'linnemann', 'advocateassociate', 'kanzlei krone', 'meyer & frey', 'meyer &amp; frey', 'kanzleiskks', 'kanzlei-qlb', 'tietje', 'kanzlei boehling', 'wns2015', 'e&h', 'e&amp;h', 'atticus');
+    private $_connectorKanzleienAlleOrdner = array('mltestXXX'); // Hier kann für eine Kanzlei aktiviert werden, dass alle Ordner anezeigt werden also auch die anderen Mitarbeiter
+    private $_access_token;
+    private $_tokenData;
+    private $_forceConnector = array('steinbock-partner'); // kein Fallback auf Freigabediennst
 
 	public function GetSupportedASVersion() {
 		return ZPush::ASV_14;
 	}
 
-	/**
-	 * Login to the OnlineAkte backend
-	 * @see IBackend::Logon()
-	 */
-	private function LogonRest($username, $domain, $password) {
+    private function GetUrlsFromAdvonetConfigurator() {
+        // Holt die aktuelle Url Konfiguration der Kanzlei. Im Fehlerfall werden die Standardwerte aus der Konfiguration übernommen (config.php)
+        if (!isset($this->_baseUrlTermine) || !isset($this->_baseUrlTodos) || !isset($this->_securityGatewayUrl) || !isset($this->_relayUrl)) {
+            $relayUrl = getenv('ZPUSH_ENV_SPK2_DEFAULT_RELAY_URL');
+            $securityGatewayUrl = getenv('ZPUSH_ENV_SPK2_DEFAULT_SECURITY_GATEWAY_URL');
+            $urlConfigurator = getenv('ZPUSH_ENV_SPK2_ADVONET_URL_CONFIGURATOR_URL') . urlencode($this->_kanzlei);
 		try {
-			$username_iso = mb_convert_encoding($username, "ISO-8859-1", "UTF-8");
-			$password_iso = mb_convert_encoding($password, "ISO-8859-1", "UTF-8");
-
-                        // prüfen ob Kanzlei bereits connector verwendet
-//			if (strpos(strtolower($this->_kanzlei), 'kirmess') !== false) {
-//				$kanzlei_iso = mb_convert_encoding($this->_kanzlei, "UTF-8", "ISO-8859-1");
-//				ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest() this->_kanzlei = %s iso = %s tolower = %s", $this->_kanzlei, $kanzlei_iso, mb_strtolower($this->_kanzlei)));
-//				ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest() iso %s", print_r($this->_testKanzleien,true)));
-//				$unpack1 = unpack('C*', strtolower($kanzlei_iso));
-//				$unpack2 = unpack('C*', 'krüger-kirmess');
-				//$normalized1 = unpack('C*', normalizer_normalize(strtolower($this->_kanzlei)));
-				//$normalized2 = unpack('C*', normalizer_normalize('krüger-kirmess'));
-//				ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest() iso [1] %s [2] %s", print_r($unpack1, true), print_r($unpack2, true)));
-				//ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest() iso normalized [1] %s [2] %s", print_r($normalized1, true), print_r($normalized2, true)));
-//			}
-			if (in_array(mb_strtolower($this->_kanzlei), $this->_testKanzleien)) {
-				try {
-					// Schritt 1: AdvonetConfigurator nach der Relay Url fragen
-					$baseUrlRelay = RELAY_BASE_URL;
-					$urlConfigurator = ADVONET_CONFIGURATOR_URL . "/Url?Kanzlei=" . urlencode($this->_kanzlei);
 					$time_start = microtime(true);
 					$rest = \Httpful\Request::get($urlConfigurator)
 						->expectsJson()
 						->timeout(15)
 						->send();
-					ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Check for Urls from AdvoNetConfigurator Executiontime: %f seconds", microtime(true) - $time_start));                    
+                ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Check for Urls from AdvoNetConfigurator Executiontime: %f seconds", microtime(true) - $time_start));
 					if (!$rest->hasErrors()) {
-						ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Response from AdvoNetConfigurator: %s", print_r($rest->body, true)));
-						if (isset($rest->body->relayUrl) && !empty($rest->body->relayUrl))
-							$baseUrlRelay = $rest->body->relayUrl;
+                    ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Response from AdvoNetConfigurator: %s", print_r($rest->body, true)));
+                    if (isset($rest->body->relayUrl) && !empty($rest->body->relayUrl)) {
+                        $relayUrl = $rest->body->relayUrl;
 					}
-					else {
-						if ($rest->hasBody())
-							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for Urls from AdvoNetConfigurator error code: %s, text: &s", $rest->code, print_r($rest->body, true)));
-						else
-							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for Urls from AdvoNetConfigurator code: %s", $rest->code));
+                    if (isset($rest->body->securityGateway) && !empty($rest->body->securityGateway)) {
+                        $securityGatewayUrl = $rest->body->securityGateway;
 					}
+                } else {
+                    if ($rest->hasBody()) {
+                        ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Error checking for Urls from AdvoNetConfigurator error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
+                    } else {
+                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Error checking for Urls from AdvoNetConfigurator: HTTP Status " . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
+                    }
+                }
+            } catch (Exception $ex) {
+                ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Check for Urls from AdvoNetConfigurator exception: %s", $ex->getMessage()));
+            }
+            $this->_relayUrl = $relayUrl;
+            $this->_baseUrlTermine = $relayUrl . RELAY_REST_URL_TERMINE_SUFFIX;
+            $this->_baseUrlTodos = $relayUrl . RELAY_REST_URL_TODOS_SUFFIX;
+            $this->_securityGatewayUrl = $securityGatewayUrl;
+        }
+        ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetUrlsFromAdvonetConfigurator() Using Relay=%s SecurityGateway=%s", $this->_relayUrl, $this->_securityGatewayUrl));
+    }
 
-					// Schritt 2 Kuerzel (=folder) auslesen
-					$url = $baseUrlRelay . "api/v1/license/KuerzelForProduct/1"; // 1 = Smartphone-Kalender
+    private function CacheConfig($ttl) {
+        // Die ausgelesene Konfigruation + token in den Cache schreiben
+        try {
+            $redis = new Redis();
+            $redis->connect(getenv('ZPUSH_ENV_SPK2_REDIS_SERVER'));
+            $hash = hash('sha256', $this->_usernameRest . "_" . $this->_passwortRest . "_" . $this->_kanzlei . "_" . $this->_datenbank);
+            $redisKeyTokenData = $hash . "_tokenData";
+            $redisKeyFolder = $hash . "_folder";
+            $redisKeyRelayUrl = $hash . "_relayUrl";
+            $redisKeySecurityGatewayUrl = $hash . "_securityGatewayUrl";
+            $redis->setex($redisKeyTokenData, $ttl, $this->_tokenData);
+            $redis->setex($redisKeyFolder, $ttl, json_encode($this->_mitarbeiter));
+            $redis->setex($redisKeyRelayUrl, $ttl, $this->_relayUrl);
+            $redis->setex($redisKeySecurityGatewayUrl, $ttl, $this->_securityGatewayUrl);
+        } catch (Exception $ex) {
+            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->CacheConfig() Exception: " . $ex->getMessage());            
+        }
+    }
+
+    private function GetCachedConfig() {
+        // Prüfen ob in Redis bereits ein gültiges Token und sonstige Konfigurationsdaten gespeichert sind
+        // Achtung: Durch das cachen der RelayUrl / SecurityGatewayUrl kann es zu Problemen nach deren Änderung kommen. Passiert nur beim Testen, nicht produktiv...
+        try {
+            $redis = new Redis();
+            $redis->connect(getenv('ZPUSH_ENV_SPK2_REDIS_SERVER'));
+            $hash = hash('sha256', $this->_usernameRest . "_" . $this->_passwortRest . "_" . $this->_kanzlei . "_" . $this->_datenbank);
+            $redisKeyTokenData = $hash . "_tokenData";
+            $redisKeyFolder = $hash . "_folder";
+            $redisKeyRelayUrl = $hash . "_relayUrl";
+            $redisKeySecurityGatewayUrl = $hash . "_securityGatewayUrl";
+            $this->_tokenData = $redis->get($redisKeyTokenData);
+            $folder = json_decode($redis->get($redisKeyFolder));
+            $relayUrl = $redis->get($redisKeyRelayUrl);
+            $securityGatewayUrl = $redis->get($redisKeySecurityGatewayUrl);
+            if (!empty($this->_tokenData) && !empty($folder) && !empty($relayUrl) && !empty($securityGatewayUrl)) {
+                $cachedTokenData = json_decode($this->_tokenData);
+                if (isset($cachedTokenData->expiration_utc) && (strlen($cachedTokenData->expiration_utc) > 0) && (strlen($cachedTokenData->access_token) > 0)) {
+                    $tokenExpirationUtc = date_create_from_format('Y-m-d\TH:i:s\Z', substr($cachedTokenData->expiration_utc, 0, strpos($cachedTokenData->expiration_utc, '.')) . 'Z', timezone_open("UTC"));
+                    $objDateTimeNow = new DateTime('NOW');
+                    $objDateTimeNow->setTimezone(new DateTimeZone("UTC"));
+                    $diffInMinutes = intdiv($tokenExpirationUtc->getTimestamp() - $objDateTimeNow->getTimestamp(), 60);
+                    $this->_mitarbeiter = $folder;
+                    $this->_relayUrl = $relayUrl;
+                    $this->_baseUrlTermine = $relayUrl . RELAY_REST_URL_TERMINE_SUFFIX;
+                    $this->_baseUrlTodos = $relayUrl . RELAY_REST_URL_TODOS_SUFFIX;
+                    $this->_securityGatewayUrl = $securityGatewayUrl;
+                    $this->_access_token = $cachedTokenData->access_token;
+                    ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetCachedConfig() Found cached config valid for %d minutes.", $diffInMinutes));
+                    return true;
+                }
+            }
+        } catch (Exception $ex) {
+            ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->GetCachedConfig() Acquiring config from cache failed with exception: " . $ex->getMessage());
+        }
+        $this->_tokenData = "";
+        return false;
+    }
+
+    private function GetToken() {
+        // Neues Token vom Security Gateway anfordern
+        // Return: Gültigkeit des Token in Sekunden oder 0 bei Fehler
+        
+        $exceptionMsg = "Error getting token: Unknown Error in GetToken";
+        
+        try {
+            $identityHMAC = new IdentityHMAC();
+            $identityHMAC->AppID = "SPK_2.0";
+            $identityHMAC->Kanzlei = $this->_kanzlei;
+            $identityHMAC->Database = $this->_datenbank;
+            $identityHMAC->User = $this->_kuerzel;
+            $identityHMAC->Password = $this->_passwortRest;
+            $identityHMAC->Role = 2;
+            $identityHMAC->Product = 1;
+
+            $body = $identityHMAC->Sign(getenv('ZPUSH_ENV_SPK2_APIKEY'));
+
+            try {
+                $rest = \Httpful\Request::post($this->_securityGatewayUrl . SECURITY_GATEWAY_TOKEN_URL_SUFFIX)
+                        ->body($body)
+                        ->expectsJson()
+                        ->timeout(15)
+                        ->sendsJson()
+                        ->send();
+                if (!$rest->hasErrors()) {
+                    if ($rest->hasBody()) {
+                        //$tokenData = json_decode($rest->body);
+                        $tokenData = $rest->body;
+                        ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToken() tokenData=%s", print_r($tokenData, true)));
+                        if (isset($tokenData->expiration_utc) && (strlen($tokenData->expiration_utc) > 0) && (strlen($tokenData->access_token) > 0)) {
+                            $tokenExpirationUtc = date_create_from_format('Y-m-d\TH:i:s\Z', substr($tokenData->expiration_utc, 0, strpos($tokenData->expiration_utc, '.')) . 'Z', timezone_open("UTC"));
+                            //$tokenExpirationUtc = date_create_from_format("", $tokenData->expiration_utc, new DateTimeZone("UTC"));
+                            $objDateTimeNow = new DateTime('NOW');
+                            $objDateTimeNow->setTimezone(new DateTimeZone("UTC"));
+                            $diffInSeconds = $tokenExpirationUtc->getTimestamp() - $objDateTimeNow->getTimestamp();
+
+                            if ($diffInSeconds >= intval(getenv('ZPUSH_ENV_SPK2_MIN_TOKEN_VALIDITY_SECONDS'))) {
+                                $ttl = $diffInSeconds - intval(getenv('ZPUSH_ENV_SPK2_MIN_TOKEN_VALIDITY_SECONDS')); // x Sekunden vor Ablauf des token diesen aus dem Cache löschen
+                                $this->_tokenData = json_encode($tokenData);
+                                $this->_access_token = $tokenData->access_token;
+                                ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->GetToken() Got new token with ttl = %d minutes", intdiv($diffInSeconds, 60)));
+                                return $ttl;
+                            } else {
+                                $exceptionMsg = sprintf("Error getting token: Got expired token with ttl = %d seconds", $diffInSeconds);
+                                ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
+                            }
+                        } else {
+                            $exceptionMsg = "Error getting token: Got invalid token, no expiration_utc or access_token!";
+                            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
+                        }
+                    } else {
+                        $exceptionMsg = "Error getting token: Got response without body!";
+                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);                        
+                    }
+                } else {
+                    if ($rest->hasBody()) {
+                        $exceptionMsg = sprintf("Error getting token: HTTP status: %s, Body: %s", $rest->code, print_r($rest->body, true));
+                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
+                    } else {
+                        $exceptionMsg = "Error getting token: HTTP Status: " . $rest->code . " Body: " . $rest->raw_body;
+                        ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() Error getting token: HTTP Status " . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
+                    }
+                }
+            } catch (Exception $fault) {
+                $exceptionMsg = "Error getting token: Acquiring new token failed with exception: " . $fault->getMessage();
+                ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
+            }
+
+        } catch (Exception $ex) {
+            $exceptionMsg = "Error getting token: Failed with exception: " . $ex->getMessage();
+            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetToken() " . $exceptionMsg);
+        }
+        throw new Exception($exceptionMsg);
+    }
+
+    private function GetMitarbeiter() {
+        // - Mitarbeiter  (=folder) auslesen
+        // Kunden wollen die Ordner Ihrer Kollegen bisher nicht sehen
+        
+        if (!in_array(strtolower($this->_kanzlei), $this->_connectorKanzleienAlleOrdner)) {
+            $this->_mitarbeiter[] = $this->_kuerzel;            
+        } else {
+            // ToDo: Wenn die Ordnerunterstützung nach der Abschaltung von Basic Auth wieder gehen soll muss hier und
+            // im SecurityGateway angepasst und das token verwendet werden 
+            $url = $this->_relayUrl . "api/v1/license/KuerzelForProduct/1"; // 1 = Smartphone-Kalender
 					$time_start = microtime(true);
 					$rest = \Httpful\Request::get($url)
 						->expectsJson()
-						->authenticateWith($username_iso, $password_iso)
+                    ->authenticateWith($this->_usernameRest, $this->_passwortRest)
 						->timeout(15)
 						->send();
-					ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Check for connector Executiontime: %f seconds", microtime(true) - $time_start));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetMitarbeiter() Check for connector Executiontime: %f seconds", microtime(true) - $time_start));
 					if (!$rest->hasErrors()) {
-						ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Response KuerzelForProduct/1: %s", print_r($rest->body, true)));
+                ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetMitarbeiter() Response KuerzelForProduct/1: %s", print_r($rest->body, true)));
 						foreach($rest->body as $folder) {
-							if (!in_array(strtolower($this->_kanzlei), $this->_testKanzleienAlleOrdner)) {
-								if ($this->_kuerzel == $folder)
 									$this->_mitarbeiter[] = $folder;
 							}
-							else {
-								$this->_mitarbeiter[] = $folder;
+            } else {
+                if ($rest->hasBody()) {
+                    ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetMitarbeiter() Error code: %s, text: %s", $rest->code, print_r($rest->body, true)));
+                } else {
+                    ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetMitarbeiter() Error: HTTP Status " . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
 							}
 						}
 					}
-					else {
-						if ($rest->hasBody())
-							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s, text: &s", $rest->code, print_r($rest->body, true)));
-						else
-							ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Check for connector error code: %s", $rest->code));
 					}
+
+    /**
+     * Login to the OnlineAkte backend
+     * @see IBackend::Logon()
+     */
+    private function LogonRest($username, $domain, $password) {
+        try {
+            $this->_usernameRest = mb_convert_encoding($username, "ISO-8859-1", "UTF-8");
+            $this->_passwortRest = mb_convert_encoding($password, "ISO-8859-1", "UTF-8");
+            $this->_frnrSuffix = preg_replace("/[^A-Za-z0-9@#]/", "_", $username);
+
+            // prüfen ob Kanzlei bereits connector verwendet
+            if (in_array(strtolower($this->_kanzlei), $this->_connectorKanzleien)) {
+                if ($this->GetCachedConfig()) {
+                    return true;
 				}
-				catch (Exception $fault) {
-					ZLog::Write(LOGLEVEL_WARN, "BackendOnlineAkte->LogonRest()Check for connector failed with exception: " . $fault->getMessage());
+                $this->GetUrlsFromAdvonetConfigurator();
+                $this->GetMitarbeiter();
+                $ttl = $this->GetToken();
+                if ($ttl > 0) {
+                    $this->CacheConfig($ttl);
+                    return true;
 				}
 			}
 
@@ -144,54 +302,37 @@ class BackendOnlineAkte extends BackendDiff {
 				$url = $this->_baseUrlTermine . "/0";
 				$time_start = microtime(true);
 				$response = \Httpful\Request::get($url)
-					->authenticateWith($username_iso, $password_iso)
+                        ->authenticateWith($this->_usernameRest, $this->_passwortRest)
 					->withoutAutoParsing()
 					->send();
 				ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->LogonRest() Executiontime: %f seconds", microtime(true) - $time_start));
 				if ($response->hasErrors()) {
-					if ($response->hasBody())
+                    if ($response->hasBody()) {
 						throw new Exception(print_r($response->body, true));
-					else 
-						throw new Exception("Unbekannter Fehler in LogonRest");
+                    } else {
+                        throw new Exception('Fehler in LogonRest ohne Connector bei GET ' . $url . ': HTTP Status ' . $response->code . "\r\n\r\nHeaders: " . $response->raw_headers . "\r\n\r\nBody: " . $response->raw_body . "\r\n\r\n");
 				}
 			}
-			else {
+            } else {
 				// connector wird verwendet
-				$this->_baseUrlTermine = $baseUrlRelay . RELAY_REST_URL_TERMINE_SUFFIX;
-				$this->_baseUrlTodos = $baseUrlRelay . RELAY_REST_URL_TODOS_SUFFIX;
-				ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest Found connector with %s folders and relayurl %s", count($this->_mitarbeiter), $baseUrlRelay));
+                ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->LogonRest Found connector with %s folders and relayurl %s", count($this->_mitarbeiter), $this->_baseUrlTermine));
 			}
-			$this->_usernameRest = $username_iso;
-			$this->_passwortRest = $password_iso;
-			$this->_frnrSuffix = preg_replace("/[^A-Za-z0-9@#]/", "_", $username);
 			return true;
-			
-		}
-		catch (Exception $fault) {
-			//ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->LogonRest(): Fehler Start");
-			ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->LogonRest(): " . $fault->getMessage(), false);
-			//ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->LogonRest(): Fehler Stop");
-			ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() failed! Username: %s ", $username_iso));
-			// Exception werfen entsprechend der Situation:
-			if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET) !== false) {
-				throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-			 }
-			elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET) !== false) {
-				throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-			}
-			elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT) !== false) {
+        } catch (Exception $fault) {
+            ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->LogonRest() Username: %s Exception: %s", $this->_usernameRest, $fault->getMessage()));
+            if (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT) !== false) {
 				// Nichts machen, am Ende wird false zurück gegeben was zu einer AuthenticationRequiredException führt
+            } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT_2) !== false) {
+                // Nichts machen, am Ende wird false zurück gegeben was zu einer AuthenticationRequiredException führt
+            } else {
+                $this->ThrowAdvoNetException($fault);
 			}
-			else {
-				throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
 			}
 			return false;
 		}
-		return false;
-	}
 
 	public function Logon($username, $domain, $password) {
-		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon(): User '%s'", $username));
+        ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon() User: '%s'", $username));
 		// Der Benutzername wird wie folgt erwartet: Kuerzel@@Kanzlei@@Datenbank (z.B ML@@matthias-test-kanzlei@@MATTHIAS)
 		$strTrennzeichen = '@@';
 		$iPos = strpos($username, $strTrennzeichen);
@@ -200,11 +341,11 @@ class BackendOnlineAkte extends BackendDiff {
 			$iPos = strpos($username, $strTrennzeichen);
 		}
 		if ($iPos > 0) {
-			ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon(): Found '%s'", $strTrennzeichen));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon() Found: '%s'", $strTrennzeichen));
 			$this->_kuerzel = htmlspecialchars(substr($username, 0, $iPos));
 			mb_detect_encoding($this->_kuerzel, 'UTF-8', true) == "UTF-8" ? : $this->_kuerzel = utf8_encode($this->_kuerzel);
 			$iPos2 = strpos($username, $strTrennzeichen, $iPos + 1);
-			ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon(): Kuerzel= '%s'", $this->_kuerzel));
+            ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon() Kuerzel: '%s'", $this->_kuerzel));
 			if ($iPos2 > $iPos) {
 				$this->_kanzlei = htmlspecialchars(substr($username, $iPos + strlen($strTrennzeichen), $iPos2 - $iPos - strlen($strTrennzeichen)));
 				mb_detect_encoding($this->_kanzlei, 'UTF-8', true) == "UTF-8" ? : $this->_kanzlei = utf8_encode($this->_kanzlei);
@@ -214,12 +355,12 @@ class BackendOnlineAkte extends BackendDiff {
 					$this->_passwort = htmlspecialchars($password);
 					mb_detect_encoding($this->_passwort, 'UTF-8', true) == "UTF-8" ? : $this->_passwort = utf8_encode($this->_passwort);
 					if ($this->_kanzlei == 'mltest') {
-						ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon(): password: [%s] encoded [%s]", $password, $this->_passwort));
+                        ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->Logon() password: [%s] encoded [%s]", $password, $this->_passwort));
 					}
 					return $this->LogonRest($username, $domain, $password);
 				}
 			}
-			ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->Logon(): LogonKalenderSB failed! Kuerzel: %s Kanzlei: %s Datenbank: %s", $this->_kuerzel, $this->_kanzlei, $this->_datenbank));
+            ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->Logon() LogonKalenderSB failed! Kuerzel: %s Kanzlei: %s Datenbank: %s", $this->_kuerzel, $this->_kanzlei, $this->_datenbank));
 			return false;
 		}
 	}
@@ -228,8 +369,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * The connections to OnlineAkte are always directly closed. So nothing special needs to happen here.
 	 * @see IBackend::Logoff()
 	 */
-	public function Logoff()
-	{
+    public function Logoff() {
 		return true;
 	}
 
@@ -237,8 +377,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * OnlineAkte doesn't need to handle SendMail
 	 * @see IBackend::SendMail()
 	 */
-	public function SendMail($sm)
-	{
+    public function SendMail($sm) {
 		return false;
 	}
 
@@ -246,8 +385,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * No attachments in OnlineAkte
 	 * @see IBackend::GetAttachmentData()
 	 */
-	public function GetAttachmentData($attname)
-	{
+    public function GetAttachmentData($attname) {
 		return false;
 	}
 
@@ -255,8 +393,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * Deletes are always permanent deletes. Messages doesn't get moved.
 	 * @see IBackend::GetWasteBasket()
 	 */
-	public function GetWasteBasket()
-	{
+    public function GetWasteBasket() {
 		return false;
 	}
 
@@ -306,75 +443,65 @@ class BackendOnlineAkte extends BackendDiff {
 			$folder->parentid = "0";
 			if ($this->UseConnector()) {
 				$folder->displayname = "Allgemein " . $this->_datenbank;
-			}
-			else {
+            } else {
 				$folder->displayname = $this->_kuerzel . " " . $this->_datenbank;
 			}
 			$folder->type = SYNC_FOLDER_TYPE_APPOINTMENT;
 			return $folder;
-		}
-		elseif ($id == "tasks") {
+        } elseif ($id == "tasks") {
 			$folder = new SyncFolder();
 			$folder->serverid = $id;
 			$folder->parentid = "0";
 			if ($this->UseConnector()) {
 				$folder->displayname = "Pool " . $this->_datenbank;
-			}
-			else {
+            } else {
 				$folder->displayname = $this->_kuerzel . " " . $this->_datenbank;
 			}
 			$folder->type = SYNC_FOLDER_TYPE_TASK;
 			return $folder;
-		}
-		elseif ($id == "deleteditems") {
+        } elseif ($id == "deleteditems") {
 			$folder = new SyncFolder();
 			$folder->serverid = $id;
 			$folder->parentid = "0";
 			$folder->displayname = "Papierkorb";
 			$folder->type = SYNC_FOLDER_TYPE_WASTEBASKET;
 			return $folder;
-		}
-		elseif ($id == "Inbox") {
+        } elseif ($id == "Inbox") {
 			$folder = new SyncFolder();
 			$folder->serverid = $id;
 			$folder->parentid = "0";
 			$folder->displayname = "Inbox";
 			$folder->type = SYNC_FOLDER_TYPE_INBOX;
 			return $folder;
-		}
-		elseif ($id == "Drafts") {
+        } elseif ($id == "Drafts") {
 			$folder = new SyncFolder();
 			$folder->serverid = $id;
 			$folder->parentid = "0";
 			$folder->displayname = "Drafts";
 			$folder->type = SYNC_FOLDER_TYPE_DRAFTS;
 			return $folder;
-		}
-		elseif ($id == "Sent") {
+        } elseif ($id == "Sent") {
 			$folder = new SyncFolder();
 			$folder->serverid = $id;
 			$folder->parentid = "0";
 			$folder->displayname = "Sent";
 			$folder->type = SYNC_FOLDER_TYPE_SENTMAIL;
 			return $folder;
-		}
-		elseif ($id == "Outbox") {
+        } elseif ($id == "Outbox") {
 			$folder = new SyncFolder();
 			$folder->serverid = $id;
 			$folder->parentid = "0";
 			$folder->displayname = "Outbox";
 			$folder->type = SYNC_FOLDER_TYPE_OUTBOX;
 			return $folder;
-		}
-		elseif ($id == "Trash") {
+        } elseif ($id == "Trash") {
 			$folder = new SyncFolder();
 			$folder->serverid = $id;
 			$folder->parentid = "0";
 			$folder->displayname = "Trash";
 			$folder->type = SYNC_FOLDER_TYPE_WASTEBASKET;
 			return $folder;
-		}
-		else {
+        } else {
 			$kuerzel = $this->getKuerzelFromFolderId($id);
 			if (!empty($kuerzel)) {
 				if (in_array($kuerzel, $this->_mitarbeiter)) {
@@ -385,8 +512,7 @@ class BackendOnlineAkte extends BackendDiff {
 					if (substr($id, 0, strlen("calendar_")) === "calendar_") {
 						$folder->type = SYNC_FOLDER_TYPE_APPOINTMENT;
 						return $folder;
-					}
-					elseif (substr($id, 0, strlen("tasks_")) === "tasks_"){
+                    } elseif (substr($id, 0, strlen("tasks_")) === "tasks_") {
 						$folder->type = SYNC_FOLDER_TYPE_TASK;
 						return $folder;
 					}
@@ -414,8 +540,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * ChangeFolder is not supported under OnlineAkte
 	 * @see BackendDiff::ChangeFolder()
 	 */
-	public function ChangeFolder($folderid, $oldid, $displayname, $type)
-	{
+    public function ChangeFolder($folderid, $oldid, $displayname, $type) {
 		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeFolder('%s','%s','%s','%s')", $folderid, $oldid, $displayname, $type));
 		return false;
 	}
@@ -424,14 +549,12 @@ class BackendOnlineAkte extends BackendDiff {
 	 * DeleteFolder is not supported under OnlineAkte
 	 * @see BackendDiff::DeleteFolder()
 	 */
-	public function DeleteFolder($id, $parentid)
-	{
+    public function DeleteFolder($id, $parentid) {
 		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->DeleteFolder('%s','%s')", $id, $parentid));
 		return false;
 	}
 
-	private function UseConnector() 
-	{
+    private function UseConnector() {
 		if (in_array(mb_strtolower($this->_kanzlei), $this->_forceConnector)) {
                     if (empty($this->_mitarbeiter)) {
 		        ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->UseConnector Forcing connector usage for '%s'", $this->_kanzlei));
@@ -447,52 +570,41 @@ class BackendOnlineAkte extends BackendDiff {
 	private function getKuerzelFromFolderId($folderid) {
 		if (substr($folderid, 0, strlen("calendar_")) === "calendar_") {
 			return substr($folderid, strlen("calendar_"));
-		}
-		elseif (substr($folderid, 0, strlen("tasks_")) === "tasks_") {
+        } elseif (substr($folderid, 0, strlen("tasks_")) === "tasks_") {
 			return substr($folderid, strlen("tasks_"));
+        } else {
+            return "";
 		}
-		else return "";
 	}
         
 	function getLineBreakType($strTemp) {
-		if (strlen($strTemp) == 0)
+        if (strlen($strTemp) == 0) {
 			return false;
+        }
 		$strEOL = '';
 		$iPosEOL = strpos($strTemp, "\r\n");
-		if ($iPosEOL === false)
-		{
+        if ($iPosEOL === false) {
 			$iPosEOL = strpos($strTemp, "\n");
-			if ($iPosEOL === false)
-			{
+            if ($iPosEOL === false) {
 				$iPosEOL = strpos($strTemp, "\r");
-				if ($iPosEOL === false)
-				{
-					ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->getLineBreakType(): Could not determine type of linebreak"));
+                if ($iPosEOL === false) {
+                    ZLog::Write(LOGLEVEL_WARN, sprintf("BackendOnlineAkte->getLineBreakType() Could not determine type of linebreak"));
 					return false;
-				}
-				else
-				{
+                } else {
 					$strEOL = "\r";
-					ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->getLineBreakType(): \r inebreaks detected');
+                    ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->getLineBreakType() \r inebreaks detected');
 				}
-			}
-			else
-			{
+            } else {
 				$strEOL = "\n";
-				ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->getLineBreakType(): \n linebreaks detected');
+                ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->getLineBreakType() \n linebreaks detected');
 			}
-		}
-		else
-		{
+        } else {
 			$strEOL = "\r\n";
-			ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->getLineBreakType(): \r\n linebreaks detected');
+            ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->getLineBreakType() \r\n linebreaks detected');
 		}
-		if (strlen($strEOL) > 0)
-		{
+        if (strlen($strEOL) > 0) {
 			return $strEOL;
-		}
-		else
-		{
+        } else {
 			return false;
 		}
 	}
@@ -502,24 +614,31 @@ class BackendOnlineAkte extends BackendDiff {
 		$report = array();
 		try {
 			$url = ONLINEAKTE_REST_URL_TODO . "?from=" . $start . "&to=" . $finish;
+            $time_start = microtime(true);
 			if ($this->UseConnector()) {
 				$kuerzel = $this->getKuerzelFromFolderId($folderid);
-				if (empty($kuerzel))
+                if (empty($kuerzel)) {
 					$kuerzel = "Pool";
+                }
 				$url = $this->_baseUrlTodos . "?from=" . $start . "&to=" . $finish . "&kuerzel=" . urlencode($kuerzel);
-			}
-			$time_start = microtime(true);
 			$rest = \Httpful\Request::get($url)
 				->expectsJson()
+                        ->addHeader('Authorization', 'Bearer ' . $this->_access_token)
+                        ->send();
+            } else {
+                $rest = \Httpful\Request::get($url)
+                        ->expectsJson()
 				->authenticateWith($this->_usernameRest, $this->_passwortRest)
 				->send();
+            }
 			ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetToDosFromOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
 			if ($rest->hasErrors()) {
-				if ($rest->hasBody())
+                if ($rest->hasBody()) {
 					throw new Exception(print_r($rest->body, true));
-				else 
-					throw new Exception("Unbekannter Fehler in GetToDosFromOnlineAkteRest");
+                } else {
+                    throw new Exception('Fehler in GetToDosFromOnlineAkteRest bei GET ' . $url . ': HTTP Status ' . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
 			}
+            }
 			foreach($rest->body as $todo) {
 				//echo var_dump($termin);
 				$response = array();
@@ -527,53 +646,64 @@ class BackendOnlineAkte extends BackendDiff {
 				$response['href'] = $todo->FrNr . "@TODO." . $this->_frnrSuffix;
 				$report[] = $response;
 			}
+        } catch (Exception $fault) {
+            ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetToDosFromOnlineAkteRest() Exception: ' . $fault->getMessage());
+            $this->ThrowAdvoNetException($fault);
 		}
-		catch (Exception $fault) {
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetToDosFromOnlineAkteRest(): Fehler Start');
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetToDosFromOnlineAkteRest(): ' . $fault->getMessage());
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetToDosFromOnlineAkteRest(): Fehler Stop');
-			// Exception werfen entsprechend der Situation:
+        return $report;
+    }
 
+    function ThrowAdvoNetException($fault) {
+			// Exception werfen entsprechend der Situation:
 			if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
 				throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-			}
-			elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
+        } elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
 				throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-			}
-			elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
+        } elseif (strpos($fault->getMessage(), FEHLER_NICHT_REGISTRIERT)) {
+            throw new OnlineakteException("AdvoNet Connector Fehler", 503);
+        } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
 				throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
-			}
-			else {
+        } elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT_2)) {
+            throw new OnlineakteException("AdvoNet Anmeldefehler", 503);
+        } else {
+            if ($this->UseConnector()) {
+                throw new OnlineakteException("AdvoNet Netzwerkfehler", 503);                    
+            } else {
 				throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
 			}
 		}
-		return $report;            
 	}
         
-
 	function GetEventsFromOnlineAkteRest($folderid, $start = null, $finish = null) {
 		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetEventsFromOnlineAkteRest('%s', %s','%s')", $folderid, $start, $finish));
 		$report = array();
 		try {
 			$url = ONLINEAKTE_REST_URL_TERMINE . "?from=" . $start . "&to=" . $finish;
+            $time_start = microtime(true);
 			if ($this->UseConnector()) {
 				$kuerzel = $this->getKuerzelFromFolderId($folderid);
-				if (empty($kuerzel))
+                if (empty($kuerzel)) {
 					$kuerzel = "Allgemein";
+                }
 				$url = $this->_baseUrlTermine . "?from=" . $start . "&to=" . $finish . "&kuerzel=" . urlencode($kuerzel);
-			}
-			$time_start = microtime(true);
 			$rest = \Httpful\Request::get($url)
 				->expectsJson()
+                        ->addHeader('Authorization', 'Bearer ' . $this->_access_token)
+                        ->send();
+            } else {
+                $rest = \Httpful\Request::get($url)
+                        ->expectsJson()
 				->authenticateWith($this->_usernameRest, $this->_passwortRest)
 				->send();
+            }
 			ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetEventsFromOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
 			if ($rest->hasErrors()) {
-				if ($rest->hasBody())
+                if ($rest->hasBody()) {
 					throw new Exception(print_r($rest->body, true));
-				else 
-					throw new Exception("Unbekannter Fehler in GetEventsFromOnlineAkteRest");
+                } else {
+                    throw new Exception('Fehler in GetEventsFromOnlineAkteRest: HTTP Status ' . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
 			}
+            }
 			
 			foreach($rest->body as $termin) {
 				//echo var_dump($termin);
@@ -582,25 +712,9 @@ class BackendOnlineAkte extends BackendDiff {
 				$response['href'] = $termin->FrNr . "@" . $this->_frnrSuffix;
 				$report[] = $response;
 			}
-		}
-		catch (Exception $fault) {
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEventsFromOnlineAkteRest(): Fehler Start');
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEventsFromOnlineAkteRest(): ' . $fault->getMessage());
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEventsFromOnlineAkteRest(): Fehler Stop');
-			// Exception werfen entsprechend der Situation:
-
-			if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
-				throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-			}
-			elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
-				throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-			}
-			elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
-				throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
-			}
-			else {
-				throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
-			}
+        } catch (Exception $fault) {
+            ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEventsFromOnlineAkteRest() Exception: ' . $fault->getMessage());
+            $this->ThrowAdvoNetException($fault);
 		}
 		return $report;            
 	}
@@ -609,8 +723,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * Get a list of all the messages.
 	 * @see BackendDiff::GetMessageList()
 	 */
-	public function GetMessageList($folderid, $cutoffdate)
-	{
+    public function GetMessageList($folderid, $cutoffdate) {
 		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetMessageList('%s','%s')", $folderid, $cutoffdate));
 
 		/* Calculating the range of events we want to sync */
@@ -621,30 +734,23 @@ class BackendOnlineAkte extends BackendDiff {
 		$beginRest = date("Y-m-d", $cutoffdate);
 		$finishRest = date("Y-m-d", 2147483647);
 		
-
-		if (substr( $folderid, 0, strlen("calendar")) === "calendar")
-		{
+        if (substr($folderid, 0, strlen("calendar")) === "calendar") {
 			$msgs = $this->GetEventsFromOnlineAkteRest($folderid, $beginRest, $finishRest);
-		}
-		else if (substr($folderid, 0, strlen("tasks")) === "tasks")
-		{
+        } else if (substr($folderid, 0, strlen("tasks")) === "tasks") {
 			$msgs = $this->GetToDosFromOnlineAkteRest($folderid, $beginRest, $finishRest);
-		}
-		else
-		{
+        } else {
 			ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetMessageList('%s','%s') Unsupported folder!", $folderid, $cutoffdate));
 			$msgs = array();
 		}
 
 		$messages = array();
 		//ZLog::Write(LOGLEVEL_WARN, 'BackendOnlineAkte->getMessageList(): msgs imploded: ' . implode($msgs));
-		foreach ($msgs as $e)
-		{
+        foreach ($msgs as $e) {
 			$id = $e['href'];
 			$this->_collection[$id] = $e;
 			$messages[] = $this->StatMessage($folderid, $id);
 		}
-		ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->GetMessageList REST('%s',cutoffdate='%s'): Got %s elements", $folderid, $begin, count($messages)));
+        ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->GetMessageList REST('%s',cutoffdate='%s') Got %s elements", $folderid, $begin, count($messages)));
 		return $messages;
 	}
 
@@ -652,17 +758,13 @@ class BackendOnlineAkte extends BackendDiff {
 	 * Get a SyncObject by its ID
 	 * @see BackendDiff::GetMessage()
 	 */
-	public function GetMessage($folderid, $id, $contentparameters)
-	{
+    public function GetMessage($folderid, $id, $contentparameters) {
 		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetMessage('%s','%s')", $folderid,  $id));
 		$data = $this->_collection[$id]['data'];
 
-		if (substr($folderid, 0, strlen("calendar")) === "calendar")
-		{
+        if (substr($folderid, 0, strlen("calendar")) === "calendar") {
 			return $this->_ParseVEventToASRest($data, $contentparameters);                        
-		}
-		elseif (substr($folderid, 0, strlen("tasks")) === "tasks")
-		{
+        } elseif (substr($folderid, 0, strlen("tasks")) === "tasks") {
 			return $this->_ParseVTodoToASRest($data, $contentparameters);                        
 		}
 		return false;
@@ -674,72 +776,68 @@ class BackendOnlineAkte extends BackendDiff {
 		try {
 			if (substr($folderid, 0, strlen("tasks")) === "tasks") {
 				$url = ONLINEAKTE_REST_URL_TODO . "/" . $frnr;
+                $time_start = microtime(true);
 				if ($this->UseConnector()) {
 					$url = $this->_baseUrlTodos . "?frnr=" . $frnr;
-				}
-				$time_start = microtime(true);
 				$rest = \Httpful\Request::get($url)
 					->expectsJson()
+                            ->addHeader('Authorization', 'Bearer ' . $this->_access_token)
+                            ->send();
+                } else {
+                    $rest = \Httpful\Request::get($url)
+                            ->expectsJson()
 					->authenticateWith($this->_usernameRest, $this->_passwortRest)
 					->send();
+                }
 				ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
 				if ($rest->hasErrors()) {
-					if ($rest->hasBody())
+                    if ($rest->hasBody()) {
 						throw new Exception(print_r($rest->body, true));
-					else 
-						throw new Exception("Unbekannter Fehler in GetEntryByUidFromOnlineAkte");
+                    } else {
+                        throw new Exception('Fehler in GetEntryByUidFromOnlineAkte: HTTP Status ' . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
 				}
+                }
 				$response = array();
 				$response['data'] = $rest->body;
 				$response['href'] = $rest->body->FrNr . "@TODO." . $this->_frnrSuffix;
 				$report[] = $response;
-			}
-			else if (substr($folderid, 0, strlen("calendar")) === "calendar") {
+            } else if (substr($folderid, 0, strlen("calendar")) === "calendar") {
 				$url = ONLINEAKTE_REST_URL_TERMINE . "/" . $frnr;
+                $time_start = microtime(true);
 				if ($this->UseConnector()) {
 					$url = $this->_baseUrlTermine . "?frnr=" . $frnr;
-				}
-				$time_start = microtime(true);
 				$rest = \Httpful\Request::get($url)
 					->expectsJson()
+                            ->addHeader('Authorization', 'Bearer ' . $this->_access_token)
+                            ->send();
+                } else {
+                    $rest = \Httpful\Request::get($url)
+                            ->expectsJson()
 					->authenticateWith($this->_usernameRest, $this->_passwortRest)
 					->send();
+                }
 				ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
 				if ($rest->hasErrors()) {
-					if ($rest->hasBody())
+                    if ($rest->hasBody()) {
 						throw new Exception(print_r($rest->body, true));
-					else 
-						throw new Exception("Unbekannter Fehler in GetEntryByUidFromOnlineAkte");
+                    } else {
+                        throw new Exception('Fehler in GetEntryByUidFromOnlineAkte: HTTP Status ' . $rest->code . "\r\n\r\nHeaders: " . $rest->raw_headers . "\r\n\r\nBody: " . $rest->raw_body . "\r\n\r\n");
 				}
+                }
 				$response = array();
 				$response['data'] = $rest->body;
 				$response['href'] = $rest->body->FrNr . "@" . $this->_frnrSuffix;
 				$report[] = $response;
+            } else {
+                ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() unknown folderid: " . $folderid);
 			}
-			else {
-				ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): unknown folderid: " . $folderid);
+        } catch (Exception $fault) {
+            ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() Fehler Start folderid=%s id=%s", $folderid, $id));
+            ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() ' . $fault->getMessage());
+            ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() ' . print_r($fault, true));
+            ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest() Fehler Stop');
+            $this->ThrowAdvoNetException($fault);
 			}
-		}
-		catch (Exception $fault) {
-			ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): Fehler Start folderid=%s id=%s", $folderid, $id));
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): ' . $fault->getMessage());
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): ' . print_r($fault, true));
-			ZLog::Write(LOGLEVEL_ERROR, 'BackendOnlineAkte->GetEntryByUidFromOnlineAkteRest(): Fehler Stop');
-			// Exception werfen entsprechend der Situation:
-
-			if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
-				throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
-			}
-			elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
-				throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-			}
-			elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
-				throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
-			}
-			else {
-				throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
-			}
-		}
 
 		return $report;
 	}
@@ -748,23 +846,18 @@ class BackendOnlineAkte extends BackendDiff {
 	 * Return id, flags and mod of a messageid
 	 * @see BackendDiff::StatMessage()
 	 */
-	public function StatMessage($folderid, $id)
-	{
+    public function StatMessage($folderid, $id) {
 		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->StatMessage('%s','%s')", $folderid,  $id));
 		//ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->StatMessage(): collection: ' . print_r($this->_collection, true));
 		$type = "VEVENT";
-		if (substr($folderid, 0, strlen("tasks")) === "tasks")
-		{
+        if (substr($folderid, 0, strlen("tasks")) === "tasks") {
 			$type = "VTODO";
 		}
 		$data = null;
-		if (array_key_exists($id, $this->_collection))
-		{
+        if (array_key_exists($id, $this->_collection)) {
 			$data = $this->_collection[$id];
 			//ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->StatMessage(): cache HIT');
-		}
-		else
-		{
+        } else {
 			if (strpos($id, ".VORTERMIN") > 0 || strpos($id, ".HINFAHRT") > 0 || strpos($id, ".RUECKFAHRT") > 0 || strpos($id, ".URLAUB") > 0)
 				return;
 			if (strpos($id, "-") === 0)
@@ -791,8 +884,7 @@ class BackendOnlineAkte extends BackendDiff {
 //                    ZLog::Write(LOGLEVEL_INFO, 'BackendOnlineAkte->StatMessage(): newDateTime: ' . print_r($newDateTime, true), false);
 				//$message['mod'] = $newDateTime->getTimestamp();                    
 			$message['mod'] = date_format($newDateTime, "Ymd\THis\Z");
-		}
-		else {
+        } else {
 			$newDateTime = DateTime::createFromFormat('Y-m-d\TH:i:s\Z', $data['data']->ZuletztGeaendertAm, timezone_open("UTC")); //2016-06-22T13:17:01
 //                    ZLog::Write(LOGLEVEL_INFO, 'BackendOnlineAkte->StatMessage(): ZuletztGeaendertAm: ' . print_r($data['data']->ZuletztGeaendertAm, true), false);
 //                    ZLog::Write(LOGLEVEL_INFO, 'BackendOnlineAkte->StatMessage(): data: ' . print_r($data['data'], true), false);
@@ -817,23 +909,30 @@ class BackendOnlineAkte extends BackendDiff {
 					}
 				}
 				$time_start = microtime(true);
+                if ($this->UseConnector()) {
 				$response = \Httpful\Request::post($url)
 					->sendsJson()
+                            ->addHeader('Authorization', 'Bearer ' . $this->_access_token)
+                            ->body(json_encode($data))
+                            ->send();
+                } else {
+                    $response = \Httpful\Request::post($url)
+                            ->sendsJson()
 					->authenticateWith($this->_usernameRest, $this->_passwortRest)
 					->body(json_encode($data))
 					->send();
+                }
 				ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
 				if ($response->hasErrors()) {
-					ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest(): Could not add to %s . HTTP Staus code %s", $folderid, $response->code));
-					ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest(): Data \n%s\n", print_r($data, true)));
+                    ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest() Could not add to %s . HTTP Staus code %s", $folderid, $response->code));
+                    ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest() Data \n%s\n", print_r($data, true)));
+                    ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest() HTTP Status " . $response->code . "\r\n\r\nHeaders: " . $response->raw_headers . "\r\n\r\nBody: " . $response->raw_body . "\r\n\r\n");
 					return false;
-				}
-				else {
-					ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest(): returned body: %s", print_r($response->body, true)));
+                } else {
+                    ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest() returned body: %s", print_r($response->body, true)));
 					return $response->body;
 				}
-			}
-			else {
+            } else {
 				$url = ONLINEAKTE_REST_URL_TERMINE . "/" . $data->FrNr;
 				if ($this->UseConnector()) {
 					//$url = RELAY_REST_URL_TERMINE . "?frnr=" . $data->FrNr;
@@ -847,38 +946,33 @@ class BackendOnlineAkte extends BackendDiff {
 					}
 				}
 				$time_start = microtime(true);
+                if ($this->UseConnector()) {
 				$response = \Httpful\Request::put($url)
 					->sendsJson()
+                            ->addHeader('Authorization', 'Bearer ' . $this->_access_token)
+                            ->body(json_encode($data))
+                            ->send();
+                } else {
+                    $response = \Httpful\Request::put($url)
+                            ->sendsJson()
 					->authenticateWith($this->_usernameRest, $this->_passwortRest)
 					->body(json_encode($data))
 					->send();
+                }
 				ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
 				if ($response->hasErrors()) {
-					ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest(): Could not modify Object in folder %s with id %s. HTTP Staus code %s", $folderid, $data->FrNr, $response->code));
+                    ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->ChangeMessageOnlineAkteRest() Could not modify Object in folder %s with id %s. HTTP Staus code %s", $folderid, $data->FrNr, $response->code));
+                    ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest() HTTP Status " . $response->code . "\r\n\r\nHeaders: " . $response->raw_headers . "\r\n\r\nBody: " . $response->raw_body . "\r\n\r\n");
 					return false;
+                } else {
+                    return $data->FrNr;
 				}
-				else return $data->FrNr;
 			}
+        } catch (Exception $fault) {
+            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest() Exception: " . $fault->getMessage());
+            $this->ThrowAdvoNetException($fault);
 		}
-		catch(Exception $fault){
-			ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest(): Fehler Start");
-			ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest(): " . $fault->getMessage());
-			ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->ChangeMessageOnlineAkteRest(): Fehler Stop");
-			// Exception werfen entsprechend der Situation:
-			if (strpos($fault->getMessage(), FEHLER_NICHT_FREIGESCHALTET)) {
-				throw new OnlineakteException("Onlineakte Freischaltfehler", 503);
 			}
-			elseif (strpos($fault->getMessage(), FEHLER_NICHT_ANGEMELDET)) {
-				throw new OnlineakteException("Onlineakte Datenfreigabedienstfehler", 503);
-			}
-			elseif (strpos($fault->getMessage(), FEHLER_FALSCHES_KENNWORT)) {
-				throw new OnlineakteException("Onlineakte Anmeldefehler", 503);
-			}
-			else {
-				throw new OnlineakteException("Onlineakte Netzwerkfehler", 503);
-			}
-		}
-	}
         
 	/**
 	 * Change/Add a message with contents received from ActiveSync
@@ -886,7 +980,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 */
 	public function ChangeMessageRest($folderid, $id, $message, $contentParameters) {
 		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->ChangeMessageRest('%s','%s')", $folderid,  $id));
-		ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->changeMessageRest(): $message=' . print_r($message, true));
+        ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->changeMessageRest() $message=' . print_r($message, true));
 
 		$data = $this->_ParseASToVCalendarRest($message, $folderid ); // $data ist ein array, kein objekt!
 		
@@ -894,25 +988,21 @@ class BackendOnlineAkte extends BackendDiff {
 			if (substr($folderid, 0, strlen("tasks")) === "tasks") {
 				$data["Kuerzel"] = $this->_kuerzel;
 				$data["SB"] = $this->_kuerzel;
-			}
-			else {
+            } else {
 				$data["Anwalt"] = $this->_kuerzel;
 				$data["Sb"] = $this->_kuerzel;                
 			}
-		}
-		else {
+        } else {
 			// connector
 			$kuerzel = $this->getKuerzelFromFolderId($folderid);
 			if (substr($folderid, 0, strlen("tasks")) === "tasks") {
 				if (!empty($kuerzel)) {
 					$data["Kuerzel"] = $kuerzel;
-				}
-				else {
+                } else {
 					$data["Kuerzel"] = "Pool";                    
 				}
 				$data["SB"] = $this->_kuerzel;
-			}
-			else {
+            } else {
 				$data["Anwalt"] = $kuerzel;
 				$data["Sb"] = $this->_kuerzel;                
 			}                
@@ -926,8 +1016,7 @@ class BackendOnlineAkte extends BackendDiff {
 			$data->FrNr = (int)substr($id, 0, strpos($id,'@'));
 			if (!array_key_exists($id, $this->_collection)) {
 				$dataOld = $this->GetEntryByUidFromOnlineAkteRest($folderid, $id);
-			}
-			else {
+            } else {
 				$dataOld = $this->_collection[$id];
 			}
 			if (array_key_exists('data', $dataOld[0])) {
@@ -949,32 +1038,34 @@ class BackendOnlineAkte extends BackendDiff {
 					return $message;
 				}
 			}
-			ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->changeMessageRest(): $dataOld=' . print_r($dataOld, true));
+            ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->changeMessageRest() $dataOld=' . print_r($dataOld, true));
 			foreach ($data as $key => $value) {
 				// Damit Werte, die in ActiveSync nicht geändert werden können, nicht verloren gehen
 				//if ($folderid != 'tasks' && $key == "Text")
-				if ((substr($folderid, 0, strlen("calendar")) === "calendar") && $key == "Text")
+                if ((substr($folderid, 0, strlen("calendar")) === "calendar") && $key == "Text") {
 					$text_backup = $dataOld->$key;
+                }
 				$dataOld->$key = $value;
 			}
-			if (isset($dataOld->UhrzeitBisTicks))
-				unset($dataOld->UhrzeitBisTicks); // Sonst werden Änderungen in Uhrzeitbis dadurch wieder überschrieben...
+            if (isset($dataOld->UhrzeitBisTicks)) {
+                unset($dataOld->UhrzeitBisTicks);
+            } // Sonst werden Änderungen in Uhrzeitbis dadurch wieder überschrieben...
 			// Bei Terminen mit Aktenverknüpfung Änderungen im Titel nur erlauben, wenn Verknüpfungstext unverändert
 			//if ($folderid != 'tasks') {
 			if (substr($folderid, 0, strlen("calendar")) === "calendar") {
 				if (isset($dataOld->Nr)) {
 					if ($dataOld->Nr > 0) {
 						$azrubrum = "";
-						if (isset($dataOld->OptionalAttendees))
+                        if (isset($dataOld->OptionalAttendees)) {
 							$azrubrum = $dataOld->OptionalAttendees;
-						elseif (isset($dataOld->AzRubrum))
+                        } elseif (isset($dataOld->AzRubrum)) {
 							$azrubrum = $dataOld->AzRubrum;
+                        }
 						if (strlen($azrubrum) > 0) {
 							$pos = strpos($dataOld->Text, " " . $azrubrum);
 							if ($pos !== false) {
 								$dataOld->Text = str_replace( " " . $azrubrum, "", $dataOld->Text);
-							}
-							else {
+                            } else {
 								//Änderung verbieten und neue Sync auslösen
 								$dataOld->Text = $text_backup;
 								$dataOld->ZuletztGeaendertAm = gmdate("Y-m-d\TH:i:s\Z");
@@ -989,8 +1080,7 @@ class BackendOnlineAkte extends BackendDiff {
 							if (strpos($dataOld->Text, "ALLE/") === 0) {
 								$dataOld->Text = str_replace( "ALLE/", "", $dataOld->Text);
 							}
-						}
-						else {
+                        } else {
 							if (strpos($dataOld->Text, $dataOld->Anwalt . "/") === 0) {
 								$dataOld->Text = str_replace( $dataOld->Anwalt . "/", "", $dataOld->Text);
 							}
@@ -998,25 +1088,26 @@ class BackendOnlineAkte extends BackendDiff {
 					}
 				}
 			}
-			ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->changeMessageRest(): $data=' . print_r($dataOld, true));
+            ZLog::Write(LOGLEVEL_DEBUG, 'BackendOnlineAkte->changeMessageRest() $data=' . print_r($dataOld, true));
 			if ($this->ChangeMessageOnlineAkteRest($dataOld, $folderid, false)) {
 				$item = array();
-				if (substr($folderid, 0, strlen("calendar")) === "calendar")
+                if (substr($folderid, 0, strlen("calendar")) === "calendar") {
 					$item['href'] = $dataOld->FrNr . "@" . $this->_frnrSuffix;
-				else
+                } else {
 					$item['href'] = $dataOld->FrNr . "@TODO." . $this->_frnrSuffix;
+                }
 				$item['data'] = $dataOld;
 				$this->_collection[$id] = $item;
 			}
-		}
-		else {
+        } else {
 			// Neu anlegen
 			$idNew = $this->ChangeMessageOnlineAkteRest($data, $folderid, true);
 			if ($idNew) {
-				if (substr($folderid, 0, strlen("calendar")) === "calendar")
+                if (substr($folderid, 0, strlen("calendar")) === "calendar") {
 					$id = $idNew . "@" . $this->_frnrSuffix;
-				else
+                } else {
 					$id = $idNew . "@TODO." . $this->_frnrSuffix;
+                }
 				$item = array();
 				$item['href'] = $id;
 				$item['data'] = $data;
@@ -1031,8 +1122,7 @@ class BackendOnlineAkte extends BackendDiff {
 		foreach( $array as $key => $value ) { 
 			if( is_array( $value ) ) { 
 				$object->$key = arrayToObject( $value ); 
-			}  
-			else { 
+            } else {
 				$object->$key = $value; 
 			} 
 		}      
@@ -1043,8 +1133,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * Change/Add a message with contents received from ActiveSync
 	 * @see BackendDiff::ChangeMessage()
 	 */
-	public function ChangeMessage($folderid, $id, $message, $contentParameters)
-	{
+    public function ChangeMessage($folderid, $id, $message, $contentParameters) {
 		return $this->ChangeMessageRest($folderid, $id, $message, $contentParameters);
 	}
 
@@ -1052,8 +1141,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * Change the read flag is not supported.
 	 * @see BackendDiff::SetReadFlag()
 	 */
-	public function SetReadFlag($folderid, $id, $flags, $contentParameters)
-	{
+    public function SetReadFlag($folderid, $id, $flags, $contentParameters) {
 		return false;
 	}
 
@@ -1063,31 +1151,36 @@ class BackendOnlineAkte extends BackendDiff {
 			$url = "";
 			if (substr($folderid, 0, strlen("calendar")) === "calendar") {
 				$url = ONLINEAKTE_REST_URL_TERMINE . "/" . $frnr;
-				if ($this->UseConnector())
+                if ($this->UseConnector()) {
 					$url = $this->_baseUrlTermine . "?frnr=" . $frnr;
 			}
-			else {
+            } else {
 				$url = ONLINEAKTE_REST_URL_TODO . "/" . $frnr;
-				if ($this->UseConnector())
+                if ($this->UseConnector()) {
 					$url = $this->_baseUrlTodos . "?frnr=" . $frnr;
 			}
+            }
 			$time_start = microtime(true);
+            if ($this->UseConnector()) {
 			$response = \Httpful\Request::delete($url)
+                        ->addHeader('Authorization', 'Bearer ' . $this->_access_token)
+                        ->send();
+            } else {
+                $response = \Httpful\Request::delete($url)
 				->authenticateWith($this->_usernameRest, $this->_passwortRest)
 				->send();
+            }
 			ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->DeleteMessageOnlineAkteRest() Executiontime: %f seconds", microtime(true) - $time_start));
 			if ($response->hasErrors()) {
-				ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->DeleteMessageOnlineAkteRest(): Could not delete object with frnr %s in folder %s. HTTP Staus code %s", $frnr, $folderid, $response->code));
+                ZLog::Write(LOGLEVEL_ERROR, sprintf("BackendOnlineAkte->DeleteMessageOnlineAkteRest() Could not delete object with frnr %s in folder %s. HTTP Staus code %s", $frnr, $folderid, $response->code));
+                ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->DeleteMessageOnlineAkteRest() HTTP Status " . $response->code . "\r\n\r\nHeaders: " . $response->raw_headers . "\r\n\r\nBody: " . $response->raw_body . "\r\n\r\n");
 				return false;
 			}
-		}
-		catch(Exception $fault){
-			ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->DeleteMessageOnlineAkteRest(): Fehler Start");
-			ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->DeleteMessageOnlineAkteRest(): " . $fault->getMessage());
-			ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->DeleteMessageOnlineAkteRest(): Fehler Stop");
+        } catch (Exception $fault) {
+            ZLog::Write(LOGLEVEL_ERROR, "BackendOnlineAkte->DeleteMessageOnlineAkteRest() Exception: " . $fault->getMessage());
 			return false;
 		}
-		ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->DeleteMessageOnlineAkteRest(): frnr=%s folder=%s", $frnr, $folderid));
+        ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->DeleteMessageOnlineAkteRest() frnr=%s folder=%s", $frnr, $folderid));
 		return true;
 	}
         
@@ -1095,24 +1188,23 @@ class BackendOnlineAkte extends BackendDiff {
 	 * Delete a message from the OnlineAkte server.
 	 * @see BackendDiff::DeleteMessage()
 	 */
-	public function DeleteMessage($folderid, $id, $contentParameters)
-	{
+    public function DeleteMessage($folderid, $id, $contentParameters) {
 		ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->DeleteMessage('%s','%s')", $folderid,  $id));
-		if (substr($folderid, 0, strlen("tasks")) === "tasks")
-		{
+        if (substr($folderid, 0, strlen("tasks")) === "tasks") {
 			// Nix zu tun
+        } else {
+            if (strpos($id, '.VORTERMIN') > 0 || strpos($id, '.HINFAHRT') > 0 || strpos($id, '.RUECKFAHRT') > 0 || strpos($id, '.URLAUB') > 0) {
+                return false;
 		}
-		else
-		{
-			if (strpos($id, '.VORTERMIN') > 0 || strpos($id, '.HINFAHRT') > 0 || strpos($id, '.RUECKFAHRT') > 0 || strpos($id, '.URLAUB') > 0)
-				return false;
-			if (strpos($id, "-") === 0)
+            if (strpos($id, "-") === 0) {
 				return false;
 		}
+        }
 
 		// Das kann vorkommen bei ignorierten Terminen / Aufgaben die nur auf dem Geraet aber nicht in Advoware existieren:
-		if (strpos($id, '@') <= 0)
+        if (strpos($id, '@') <= 0) {
 			return true;
+        }
 
 		return $this->DeleteMessageOnlineAkteRest(substr($id, 0, strpos($id,'@')), $folderid);                
 	}
@@ -1121,8 +1213,7 @@ class BackendOnlineAkte extends BackendDiff {
 	 * Move a message is not supported by OnlineAkte.
 	 * @see BackendDiff::MoveMessage()
 	 */
-	public function MoveMessage($folderid, $id, $newfolderid, $contentParameters)
-	{
+    public function MoveMessage($folderid, $id, $newfolderid, $contentParameters) {
 		return false;
 	}
 
@@ -1133,7 +1224,6 @@ class BackendOnlineAkte extends BackendDiff {
 		$message = new SyncAppointment();
 		$message->timezone = $this->_GetTimezoneString("Europe/Berlin");
 		//$ical = new iCalComponent($data);
-		
 		//$vtodos = $ical->GetComponents("VTODO");
 		//Should only loop once
 		//foreach ($vtodos as $vtodo)
@@ -1155,8 +1245,7 @@ class BackendOnlineAkte extends BackendDiff {
 		if (substr($folderid, 0, strlen("calendar")) === "calendar") {
 			$termin = $this->_ParseASEventToVEventRest($data);
 			return $termin;                
-		}
-		else if (substr($folderid, 0, strlen("tasks")) === "tasks") {
+        } else if (substr($folderid, 0, strlen("tasks")) === "tasks") {
 			$event = $this->_ParseASTaskToVTodoRest($data);
 			return $event;
 		}
@@ -1167,14 +1256,12 @@ class BackendOnlineAkte extends BackendDiff {
 	 * @param string $data
 	 * @param ContentParameters $contentparameters
 	 */
-	private function _ParseVTodoToASRest($data, $contentparameters)
-	{
+    private function _ParseVTodoToASRest($data, $contentparameters) {
 		//ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->_ParseVTodoToAS(): Parsing VTodo: " . print_r($data, true)));
 		$truncsize = Utils::GetTruncSize($contentparameters->GetTruncation());
 
 		$message = new SyncTask();
 		//$ical = new iCalComponent($data);
-
 		//$vtodos = $ical->GetComponents("VTODO");
 		//Should only loop once
 		//foreach ($vtodos as $vtodo)
@@ -1201,8 +1288,7 @@ class BackendOnlineAkte extends BackendDiff {
 					if (strlen($vevent->OptionalAttendees) > 0) {
 						$message->subject = $message->subject . " " . $vevent->OptionalAttendees;
 					}
-				}
-				else if (isset($vevent->AzRubrum)) {
+                } else if (isset($vevent->AzRubrum)) {
 					if (strlen($vevent->AzRubrum) > 0) {
 						$message->subject = $message->subject . " " . $vevent->AzRubrum;
 					}
@@ -1214,8 +1300,7 @@ class BackendOnlineAkte extends BackendDiff {
 				// Kürzel am Anfang des Titels anzeigen wie in advoware
 				if (empty($vevent->Anwalt)  || ($vevent->Anwalt == 'ALLE') || ($vevent->Anwalt == 'Allgemein') ) {
 					$message->subject = "ALLE/" . $message->subject;                            
-				}
-				else {
+                } else {
 					$message->subject = $vevent->Anwalt . "/" . $message->subject;
 				}
 			}
@@ -1262,8 +1347,7 @@ class BackendOnlineAkte extends BackendDiff {
 		if (isset($vevent->Privat)) {
 			if ($vevent->Privat == 1) {
 				$message->sensitivity = "2";
-			}
-			else {
+            } else {
 				$message->sensitivity = "0";
 			}
 		}
@@ -1274,25 +1358,22 @@ class BackendOnlineAkte extends BackendDiff {
 				$message->asbody = new SyncBaseBody();
 				$message->asbody->type = SYNC_BODYPREFERENCE_PLAIN;
 				if ($truncsize > 0 && $truncsize < strlen($body)) {
-					ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->_ParseVEventToSyncObjectRest(): truncsize '%d' msglen '%d'", $truncsize, strlen($body)));
+                    ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->_ParseVEventToSyncObjectRest() truncsize '%d' msglen '%d'", $truncsize, strlen($body)));
 					$message->asbody->truncated = 1;
 					$message->asbody->data = StringStreamWrapper::Open(Utils::Utf8_truncate($body, $truncsize));
 					$message->asbody->estimatedDataSize = strlen(Utils::Utf8_truncate($body, $truncsize));
-				}
-				else {
-					ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->_ParseVEventToSyncObjectRest(): NOT TRUNCATED '%d' msglen '%d'", $truncsize, strlen($body)));
+                } else {
+                    ZLog::Write(LOGLEVEL_DEBUG, sprintf("BackendOnlineAkte->_ParseVEventToSyncObjectRest() NOT TRUNCATED '%d' msglen '%d'", $truncsize, strlen($body)));
 					//$message->asbody->truncated = 0;
 					$message->asbody->data = StringStreamWrapper::Open($body);
 					$message->asbody->estimatedDataSize = strlen($body);
 				}
-			}
-			else {
+            } else {
 				$message->body = $body;
 				if ($truncsize > 0 && $truncsize < strlen($message->body)) {
 					$message->bodytruncated = 1;
 					$message->body = Utils::Utf8_truncate($message->body, $truncsize);
-				}
-				else {
+                } else {
 					$message->bodytruncated = 0;
 				}
 				$message->bodysize = strlen($message->body);
@@ -1343,20 +1424,21 @@ class BackendOnlineAkte extends BackendDiff {
 						break;
 					case 3: //monatlich
 						$recurrence->type = "2";
-						if (isset($vevent->Datum))
+                        if (isset($vevent->Datum)) {
 							$recurrence->dayofmonth = (int)substr($vevent->Datum, 8, 2);
+                        }
 						break;
 					case 4: //jährlich
 						$recurrence->type = "5";
-						if (isset($vevent->Datum))
+                        if (isset($vevent->Datum)) {
 							$recurrence->dayofmonth = (int)substr($vevent->Datum, 8, 2);
+                        }
 						break;
 				}
 				if (isset($vevent->DatumBis)) {
 					if (isset($vevent->UhrzeitBis)) {
 						$recurrence->until = $this->_MakeUTCDateRest(substr($vevent->DatumBis, 0, 11) . $vevent->UhrzeitBis);
-					}
-					else {
+                    } else {
 						$recurrence->until = $this->_MakeUTCDateRest(substr($vevent->DatumBis, 0, 11) . '23:59:59');                                
 					}
 				}
@@ -1383,14 +1465,14 @@ class BackendOnlineAkte extends BackendDiff {
 	 
 	return $message;            
 	}
+
         /**
 	 * Parse 1 VEvent
 	 * @param ical_vtodo $vtodo
 	 * @param SyncAppointment(Exception) $message
 	 * @param int $truncsize
 	 */
-	private function _ParseVTodoToSyncObjectRest($vtodo, $message, $truncsize)
-	{
+    private function _ParseVTodoToSyncObjectRest($vtodo, $message, $truncsize) {
 		//Default
 		$message->reminderset = "0";
 		$message->importance = "1";
@@ -1438,8 +1520,7 @@ class BackendOnlineAkte extends BackendDiff {
 		if (isset($vtodo->Privat)) {
 			if ($vtodo->Privat == "1") {
 				$message->sensitivity = "2";
-			}
-			else {
+            } else {
 				$message->sensitivity = "0";
 			}
 		}
@@ -1454,20 +1535,17 @@ class BackendOnlineAkte extends BackendDiff {
 					$message->asbody->truncated = 1;
 					$message->asbody->data = StringStreamWrapper::Open(Utils::Utf8_truncate($body, $truncsize));
 					$message->asbody->estimatedDataSize = strlen(Utils::Utf8_truncate($body, $truncsize));
-				}
-				else {
+                } else {
 					//$message->asbody->truncated = 0;
 					$message->asbody->data = StringStreamWrapper::Open($body);
 					$message->asbody->estimatedDataSize = strlen($body);
 				}
-			}
-			else {
+            } else {
 				$message->body = $body;
 				if ($truncsize > 0 && $truncsize < strlen($message->body)) {
 					$message->bodytruncated = 1;
 					$message->body = Utils::Utf8_truncate($message->body, $truncsize);
-				}
-				else {
+                } else {
 					$message->bodytruncated = 0;
 				}
 				$message->bodysize = strlen($message->body);
@@ -1490,24 +1568,22 @@ class BackendOnlineAkte extends BackendDiff {
 		$termin["Abwesenheit"] = 0;
 		$termin["Ort"] = "";
 
-		if (isset($data->dtstamp))
-		{
+        if (isset($data->dtstamp)) {
 			$termin["ZuletztGeaendertAm"] = gmdate("Y-m-d\TH:i:s\Z", $data->dtstamp);
 		}
 		if (isset($data->alldayevent)) {
-			if ($data->alldayevent == '1')
+            if ($data->alldayevent == '1') {
 				$termin["Abwesenheit"] = 1;
 		}
-		if (isset($data->starttime))
-		{
+        }
+        if (isset($data->starttime)) {
 //                if ($termin["Abwesenheit"] == 1)
 //                    $termin["Datum"] = gmdate("Y-m-d", $data->starttime) . "T00:00:00";
 //                else 
 //                    $termin["Datum"] = gmdate("Y-m-d\TH:i:s\Z", $data->starttime);
 			$termin["Datum"] = gmdate("Y-m-d\TH:i:s\Z", $data->starttime);
 		}
-		if (isset($data->subject))
-		{
+        if (isset($data->subject)) {
 			$termin["Text"] = $data->subject;
 		}
 //            if (isset($data->organizeremail))
@@ -1521,21 +1597,19 @@ class BackendOnlineAkte extends BackendDiff {
 //                            $vevent->AddProperty("ORGANIZER", sprintf("MAILTO:%s", $data->organizeremail));
 //                    }
 //            }
-		if (isset($data->location)) 
+        if (isset($data->location)) {
 			$termin["Ort"] = $data->location;
-		if (isset($data->endtime))
-		{
+        }
+        if (isset($data->endtime)) {
 			if ($termin["Abwesenheit"] == 1) {
 				$termin["DatumBis"] = gmdate("Y-m-d\TH:i:s\Z", $data->endtime - 60); // minus eine Minute weil das in AW so gespeichert wird
 				$termin["UhrzeitBis"] = gmdate("H:i:s", $data->endtime - 60); // minus eine Minute weil das in AW so gespeichert wird
-			}
-			else {
+            } else {
 				$termin["DatumBis"] = gmdate("Y-m-d\TH:i:s\Z", $data->endtime);
 				$termin["UhrzeitBis"] = gmdate("H:i:s", $data->endtime);
 			}
 		}
-		if (isset($data->recurrence))
-		{
+        if (isset($data->recurrence)) {
 			If (isset($data->starttime) && isset($data->endtime)) {
 				if (($data->endtime - $data->starttime) <= 86340) { // 23:59:00 längste Zeit für sich Wiederholende Termine in AW
 					if (isset($data->recurrence->type)) {
@@ -1575,16 +1649,14 @@ class BackendOnlineAkte extends BackendDiff {
 							}
 							$termin["DatumBis"] = gmdate("Y-m-d", $data->recurrence->until) . gmdate("\TH:i:s\Z", $data->endtime);
 							$termin["Dauertermin"] = 1;
-						}
-						else {
+                        } else {
 							$count = 0;
 							if (isset($data->recurrence->occurrences)) {
 								$count = $data->recurrence->occurrences;
 							}
 							if ($count >= 2) {
 							// ToDO: Hier muss noch irgendwie die Endzeit gesetzt werden                                    
-							}
-							else {
+                            } else {
 								// Wiederholung ohne Enddatem (=für immer)
 								// größtes Datum in 32 Bit Unix Timestamp ist 2038-1-19T03:14:08Z
 								// Wir setzen nur das Jahr auf 2037 und lassen den Rest um Probleme mit Sommer/Winterzeit zu vermeiden
@@ -1601,12 +1673,10 @@ class BackendOnlineAkte extends BackendDiff {
 							if ($this->UseConnector()) {
 								// connector Dtos benötigen int
 								$termin["Turnus"] = intval($data->recurrence->interval);
-							}
-							else {
+                            } else {
 								$termin["Turnus"] = $data->recurrence->interval;
 							}
-						}
-						else {
+                        } else {
 							$termin["Turnus"] = 1;
 						}
 	//                    if (isset($data->recurrence->dayofweek)) {
@@ -1718,12 +1788,10 @@ class BackendOnlineAkte extends BackendDiff {
 			$rtfparser->output("ascii");
 			$rtfparser->parse();
 			$body = $rtfparser->out;
-		}
-		elseif (isset($data->body)) {
+        } elseif (isset($data->body)) {
 			$body = $data->body;
 			//ZLog::Write(LOGLEVEL_DEBUG, "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL DESCRIPTION: " . str_replace ( "\n", "\r\n", str_replace ( "\r", "", $data->body ) ) );
-		}
-		elseif (isset($data->asbody)) {
+        } elseif (isset($data->asbody)) {
 			if (isset($data->asbody->data)) {
 				$body = stream_get_contents($data->asbody->data);
 			}
@@ -1731,8 +1799,7 @@ class BackendOnlineAkte extends BackendDiff {
 		if (isset($body)) {
 			if (strpos($body, "\n") === false) {
 				$body = str_replace("\r", "\r\n", $body);
-			}
-			else {
+            } else {
 				$body = str_replace ( "\n", "\r\n", str_replace ( "\r", "", $body ) );
 			}
 			$termin["Notiz"] = $body;                
@@ -1754,18 +1821,14 @@ class BackendOnlineAkte extends BackendDiff {
 		$vtodo = array();
 		$vtodo["ZuletztGeaendertAm"] = gmdate("Y-m-d\TH:i:s\Z");
 		$body = null;
-		if (isset($data->asbody))
-		{
-			if (isset($data->asbody->data))
-			{
+        if (isset($data->asbody)) {
+            if (isset($data->asbody->data)) {
 				$body = stream_get_contents($data->asbody->data);
 				//$vtodo["Notizen"] = $data->asbody->data;
 			}
-		}
-		elseif (isset($data->body))
-		{
+        } elseif (isset($data->body)) {
 			//$vtodo->AddProperty("DESCRIPTION", $data->body);
-			$body = $data->body;;
+            $body = $data->body;
 			//$vtodo["Notizen"] = $body_temp;
 			//ZLog::Write(LOGLEVEL_DEBUG, "LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL DESCRIPTION: " . str_replace ( "\n", "\r\n", str_replace ( "\r", "", $data->body ) ) );
 			//ZLog::Write(LOGLEVEL_DEBUG, 'LLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLLL $data->body: ' . print_r($data->body, true));
@@ -1774,45 +1837,32 @@ class BackendOnlineAkte extends BackendDiff {
 		if (isset($body)) {
 			if (strpos($body, "\n") === false) {
 				$body = str_replace("\r", "\r\n", $body);
-			}
-			else {
+            } else {
 				$body = str_replace ( "\n", "\r\n", str_replace ( "\r", "", $body ) );
 			}
 			$vtodo["Notizen"] = $body;                
 		}
-		if (isset($data->complete))
-		{
-			if ($data->complete == "0")
-			{
+        if (isset($data->complete)) {
+            if ($data->complete == "0") {
 				$vtodo["Status"] = "offen";
 				$vtodo["Erledigt"] = "";
-			}
-			else
-			{
+            } else {
 				$vtodo["Status"] = "erledigt";
 				$vtodo["Erledigt"] = "1";
 			}
 		}
-		if (isset($data->datecompleted))
-		{
+        if (isset($data->datecompleted)) {
 			$vtodo["Erledigt_Datum"] = gmdate("Y-m-d\TH:i:s\Z", $data->datecompleted);
 		}
-		if ($data->utcduedate)
-		{
+        if ($data->utcduedate) {
 			$vtodo["Datum"] = gmdate("Y-m-d\TH:i:s\Z", $data->utcduedate);
 		}
-		if (isset($data->importance))
-		{
-			if ($data->importance == "2") // High
-			{
+        if (isset($data->importance)) {
+            if ($data->importance == "2") { // High
 				$vtodo["Prioritaet"] = "Hoch";
-			}
-			elseif ($data->importance == "0") // Low
-			{
+            } elseif ($data->importance == "0") { // Low
 				$vtodo["Prioritaet"] = "Niedrig";
-			}
-			else
-			{
+            } else {
 				$vtodo["Prioritaet"] = "Normal";
 			}
 		}
@@ -1820,8 +1870,7 @@ class BackendOnlineAkte extends BackendDiff {
 //            {
 //                    $vtodo->AddProperty("RRULE", $this->_GenerateRecurrence($data->recurrence));
 //            }
-		if ($data->reminderset && $data->remindertime)
-		{
+        if ($data->reminderset && $data->remindertime) {
 			$vtodo["ErinnerungsDatum"] = gmdate("Y-m-d\TH:i:s\Z", $data->remindertime);
 			if (!isset($vtodo["Datum"])) {
 				$vtodo["Datum"] = gmdate("Y-m-d\TH:i:s\Z", $data->remindertime);
@@ -1832,10 +1881,8 @@ class BackendOnlineAkte extends BackendDiff {
 			$vtodo["Datum"] = gmdate("Y-m-d\TH:i:s\Z");
 		}
 
-		if (isset($data->sensitivity))
-		{
-			switch ($data->sensitivity)
-			{
+        if (isset($data->sensitivity)) {
+            switch ($data->sensitivity) {
 				case "0":
 					$vtodo["Privat"] = "0";
 						break;
@@ -1846,18 +1893,15 @@ class BackendOnlineAkte extends BackendDiff {
 					break;
 			}
 		}
-		if (isset($data->utcstartdate))
-		{
+        if (isset($data->utcstartdate)) {
 			if (!isset($vtodo["Datum"])) {
 				$vtodo["Datum"] = gmdate("Y-m-d\TH:i:s\Z", $data->utcstartdate);
 			}
 		}
-		if (isset($data->subject))
-		{
+        if (isset($data->subject)) {
 			$vtodo["Text"] = $data->subject;
 		}
-		if (isset($data->rtf))
-		{
+        if (isset($data->rtf)) {
 			$rtfparser = new rtf();
 			$rtfparser->loadrtf(base64_decode($data->rtf));
 			$rtfparser->output("ascii");
@@ -1874,44 +1918,35 @@ class BackendOnlineAkte extends BackendDiff {
 	 * @param string $value "2016-08-07T15:27:27"
 	 * @param string $timezone
 	 */
-	private function _MakeUTCDateRest($value, $timezone = null)
-	{
+    private function _MakeUTCDateRest($value, $timezone = null) {
 		$tz = null;
-		if ($timezone)
-		{
+        if ($timezone) {
 			$tz = timezone_open($timezone);
 		}
-		if (!$tz)
-		{
+        if (!$tz) {
 			//If there is no timezone set, we use the default timezone
 			$tz = timezone_open(date_default_timezone_get());
 		}
 		//20110930T090000Z
 		$date = date_create_from_format('Y-m-d\TH:i:s', $value, timezone_open("UTC"));
-		if (!$date)
-		{
+        if (!$date) {
 			$date = date_create_from_format('Y-m-d\TH:i:s.u', $value, timezone_open("UTC"));
 		}
-		if (!$date)
-		{
+        if (!$date) {
 			$date = date_create_from_format('Y-m-d\TH:i:s.u\Z', $value, timezone_open("UTC"));
 		}
-		if (!$date)
-		{
+        if (!$date) {
 			$date = date_create_from_format('Y-m-d\TH:i:s\Z', $value, timezone_open("UTC"));
 		}
-		if (!$date)
-		{
+        if (!$date) {
 			// aeltere php / ubuntu können nur microseconds mit genau 6 Stellen
 			$date = date_create_from_format('Y-m-d\TH:i:s\Z', substr($value, 0, strpos($value, '.')) . 'Z', timezone_open("UTC"));
 		}
-		if (!$date)
-		{
+        if (!$date) {
 			//20110930T090000
 			$date = date_create_from_format('Ymd\THis', $value, $tz);
 		}
-		if (!$date)
-		{
+        if (!$date) {
 			//20110930 (Append T000000Z to the date, so it starts at midnight)
 			$date = date_create_from_format('Ymd\THis\Z', $value . "T000000Z", $tz);
 		}
@@ -1924,28 +1959,24 @@ class BackendOnlineAkte extends BackendDiff {
 	 * @param string $with_names
 	 * @throws Exception
 	 */
-	private function _GetTimezoneString($timezone, $with_names = true)
-	{
+    private function _GetTimezoneString($timezone, $with_names = true) {
 		// UTC needs special handling
-		if ($timezone == "UTC")
+        if ($timezone == "UTC") {
 			return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
+        }
 		try {
 			//Generate a timezone string (PHP 5.3 needed for this)
 			$timezone = new DateTimeZone($timezone);
 			$trans = $timezone->getTransitions(time());
 			$stdTime = null;
 			$dstTime = null;
-			if (count($trans) < 3)
-			{
+            if (count($trans) < 3) {
 				throw new Exception();
 			}
-			if ($trans[1]['isdst'] == 1)
-			{
+            if ($trans[1]['isdst'] == 1) {
 				$dstTime = $trans[1];
 				$stdTime = $trans[2];
-			}
-			else
-			{
+            } else {
 				$dstTime = $trans[2];
 				$stdTime = $trans[1];
 			}
@@ -1960,8 +1991,7 @@ class BackendOnlineAkte extends BackendDiff {
 			$stdHour = $stdTimeO->format('H');
 			$stdMinute = $stdTimeO->format('i');
 			$stdTimeO->add(new DateInterval('P7D'));
-			if ($stdTimeO->format('n') != $stdMonth)
-			{
+            if ($stdTimeO->format('n') != $stdMonth) {
 				$stdWeek = 5;
 			}
 			$dstTimeO = new DateTime($dstTime['time']);
@@ -1974,26 +2004,20 @@ class BackendOnlineAkte extends BackendDiff {
 			$dstHour = $dstTimeO->format('H');
 			$dstMinute = $dstTimeO->format('i');
 			$dstTimeO->add(new DateInterval('P7D'));
-			if ($dstTimeO->format('n') != $dstMonth)
-			{
+            if ($dstTimeO->format('n') != $dstMonth) {
 				$dstWeek = 5;
 			}
 			$dstBias = ($dstTime['offset'] - $stdTime['offset']) / -60;
-			if ($with_names)
-			{
+            if ($with_names) {
 				return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', $stdBias, $stdName, 0, $stdMonth, $stdDay, $stdWeek, $stdHour, $stdMinute, 0, 0, 0, $dstName, 0, $dstMonth, $dstDay, $dstWeek, $dstHour, $dstMinute, 0, 0, $dstBias));
-			}
-			else
-			{
+            } else {
 				return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', $stdBias, '', 0, $stdMonth, $stdDay, $stdWeek, $stdHour, $stdMinute, 0, 0, 0, '', 0, $dstMonth, $dstDay, $dstWeek, $dstHour, $dstMinute, 0, 0, $dstBias));
 			}
-		}
-		catch (Exception $e) {
+        } catch (Exception $e) {
 			// If invalid timezone is given, we return UTC
 			return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
 		}
 		return base64_encode(pack('la64vvvvvvvvla64vvvvvvvvl', 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0, '', 0, 0, 0, 0, 0, 0, 0, 0, 0));
 	}
-}
 
-?>
+}
