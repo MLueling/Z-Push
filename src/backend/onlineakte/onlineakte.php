@@ -432,7 +432,7 @@ class BackendOnlineAkte extends BackendDiff {
 
 	private function UseConnector() 
 	{
-		if (in_array(strtolower($this->_kanzlei), $this->_forceConnector)) {
+		if (in_array(mb_strtolower($this->_kanzlei), $this->_forceConnector)) {
                     if (empty($this->_mitarbeiter)) {
 		        ZLog::Write(LOGLEVEL_INFO, sprintf("BackendOnlineAkte->UseConnector Forcing connector usage for '%s'", $this->_kanzlei));
                         $this->_mitarbeiter[] = $this->_kuerzel;
