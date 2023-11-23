@@ -128,7 +128,7 @@
         $specialLogUsers = array('1@@steinbock-partner@@advoware', '1@@Steinbock-Partner@@ADVOWARE', 'ML##ubtest##TESTUWE', 'ml##ubtest##testuwe', 'UB##ubtest##TESTUWE', 'ub##ubtest##testuwe');
     }
     else {
-        $specialLogUsers = array('1@@steinbock-partner@@advoware', '1@@Steinbock-Partner@@ADVOWARE');
+        $specialLogUsers = array();
     }
 
     // Filelog settings
